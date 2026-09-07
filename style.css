@@ -9,6 +9,9 @@
   --up: #dc2626;
   --down: #16a34a;
   --error: #b91c1c;
+  --warn: #b45309;
+  --warn-soft: #fef3c7;
+  --warn-border: #fcd88a;
 }
 @media (prefers-color-scheme: dark) {
   :root {
@@ -22,6 +25,9 @@
     --up: #f87171;
     --down: #4ade80;
     --error: #f87171;
+    --warn: #fbbf24;
+    --warn-soft: #3a2a08;
+    --warn-border: #5c430f;
   }
 }
 
@@ -75,6 +81,26 @@ button.on { background: var(--accent); color: #fff; }
 }
 .banner.ok { background: var(--accent-soft); color: var(--accent); border-color: transparent; }
 .banner.warn { background: var(--accent-soft); color: var(--error); border-color: transparent; }
+
+/* 실시간 조회 실패 표시 (지속) */
+.staleness {
+  display: flex; align-items: center; gap: 8px;
+  margin: 12px 0 0; padding: 9px 12px;
+  border-radius: 8px; font-size: .86rem; font-weight: 500;
+  color: var(--warn); background: var(--warn-soft); border: 1px solid var(--warn-border);
+}
+.staleness .dot {
+  width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+  background: var(--warn); animation: pulse 1.8s ease-in-out infinite;
+}
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .3; } }
+@media (prefers-reduced-motion: reduce) { .staleness .dot { animation: none; } }
+#staleness-retry {
+  margin-left: auto; flex-shrink: 0;
+  padding: 3px 10px; font-size: .8rem; font-weight: 600;
+  background: transparent; color: var(--warn); border: 1px solid var(--warn-border);
+}
+
 .stats {
   display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
   gap: 10px; margin: 16px 0;

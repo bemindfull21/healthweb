@@ -10,6 +10,8 @@ let allEntries = [];
 let profile = null; // { uid, target }
 let lastRefresh = 0;
 let bannerTimer = null;
+let currentUpdatedAt = null; // 화면에 표시 중인 데이터의 updated_at
+let relTimer = null;
 
 // ---------- 유틸 ----------
 
@@ -91,10 +93,18 @@ async function refreshNow(silent = false) {
   try {
     const data = await fetchLive(profile.uid);
     lastRefresh = now;
-    showDashboard(data);
+    showDashboard(data); // updated_at = API 응답 시각
+    hideStale();
     if (!silent) banner("실시간 데이터로 갱신되었습니다", "ok");
   } catch (e) {
-    if (!silent) banner(`${e.message || "조회 실패"} · 마지막 갱신본을 표시합니다`, "warn");
+    const rateLimited = /429|요청이 많/.test(e.message || "");
+    if (rateLimited) {
+      if (!silent) banner("요청이 많습니다 · 잠시 후 다시 시도해 주세요", "warn");
+    } else {
+      // 서버 연결 자체 실패 → 화면 데이터는 스냅샷이므로 지속 표시
+      showStale();
+      if (!silent) banner("실시간 연결에 실패했습니다 · 마지막 갱신본을 표시합니다", "warn");
+    }
   } finally {
     btn.disabled = false;
     btn.classList.remove("spin");
@@ -110,12 +120,49 @@ function banner(msg, kind) {
   if (kind === "ok") bannerTimer = setTimeout(() => (el.hidden = true), 4000);
 }
 
+// ---------- 실시간 연결 상태 ----------
+
+function relTime(iso) {
+  if (!iso) return "알 수 없음";
+  const t = new Date(iso).getTime();
+  if (isNaN(t)) return "알 수 없음";
+  const s = Math.max(0, (Date.now() - t) / 1000);
+  if (s < 60) return "방금";
+  if (s < 3600) return `${Math.floor(s / 60)}분 전`;
+  if (s < 86400) return `${Math.floor(s / 3600)}시간 전`;
+  return `${Math.floor(s / 86400)}일 전`;
+}
+
+function staleText() {
+  return `실시간 연결 안 됨 · 마지막 갱신 ${relTime(currentUpdatedAt)}`;
+}
+
+function showStale() {
+  $("staleness-text").textContent = staleText();
+  $("staleness").hidden = false;
+}
+
+function hideStale() {
+  $("staleness").hidden = true;
+}
+
+// 표시 중인 "N분 전" 텍스트를 1분마다 갱신
+function startRelTimer() {
+  clearInterval(relTimer);
+  relTimer = setInterval(() => {
+    $("updated").textContent = relTime(currentUpdatedAt);
+    if (!$("staleness").hidden) $("staleness-text").textContent = staleText();
+  }, 60000);
+}
+
 // ---------- 화면 전환 ----------
 
 function showRegister(errMsg) {
   $("dashboard").hidden = true;
   $("register").hidden = false;
   $("banner").hidden = true;
+  hideStale();
+  clearInterval(relTimer);
   const e = $("register-error");
   if (errMsg) {
     e.textContent = errMsg;
@@ -130,7 +177,10 @@ function showDashboard(data) {
   $("dashboard").hidden = false;
   $("refresh").hidden = !LIVE_API;
   allEntries = (data.entries || []).slice().sort((a, b) => key(a).localeCompare(key(b)));
-  $("updated").textContent = fmtUpdated(data.updated_at);
+  currentUpdatedAt = data.updated_at || null;
+  $("updated").textContent = relTime(currentUpdatedAt);
+  $("updated").title = fmtUpdated(currentUpdatedAt);
+  startRelTimer();
   renderStats();
   applyRange(currentDays());
   renderTable();
@@ -336,6 +386,7 @@ $("register-form").addEventListener("submit", async (ev) => {
 });
 
 $("refresh").addEventListener("click", () => refreshNow(false));
+$("staleness-retry").addEventListener("click", () => refreshNow(false));
 
 $("logout").addEventListener("click", () => {
   clearProfile();
