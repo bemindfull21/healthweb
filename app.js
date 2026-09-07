@@ -81,7 +81,8 @@ async function refreshNow(silent = false) {
   if (!LIVE_API || !profile?.uid) return;
   const now = Date.now();
   if (now - lastRefresh < 10000) {
-    if (!silent) banner("잠시 후 다시 시도해 주세요", "warn");
+    // 진입 시 자동 갱신이 이미 돌았으므로, 직후 수동 클릭은 "최신"으로 안내
+    if (!silent) banner("이미 최신 데이터입니다", "ok");
     return;
   }
   const btn = $("refresh");
