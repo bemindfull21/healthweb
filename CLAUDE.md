@@ -48,3 +48,31 @@ weight_log ──(6h마다/수동/repository_dispatch)──▶ scripts/export_w
 ## (선택) 즉시 갱신
 
 health-bot이 몸무게 저장 후 GitHub에 `repository_dispatch`(event_type `healthbot-new-weight`)를 쏘면 6시간 안 기다리고 갱신됨. health-bot에 GitHub PAT(repo 스코프) 필요.
+
+## 실시간 새로고침 (방식 B — `api/`)
+
+정적 JSON(방식 A)은 최대 6시간 지연. `api/`는 VM에서 `admin.weight_log`를 직접 읽어
+프론트 **'새로고침' 버튼**에 실시간 응답을 준다. 방식 A는 그대로 두고(빠른 초기 로드·폴백),
+버튼만 라이브 API를 친다.
+
+```
+브라우저 ─https─▶ Caddy(healthweb.duckdns.org, TLS 종단) ─▶ 127.0.0.1:8000 uvicorn
+        ─▶ oracledb thin + /opt/health-bot/wallet ─▶ ADB
+```
+
+- `api/app.py` — FastAPI. `GET /weights?uid=<tg_user_id>` → `data/users/<hash>.json` 과 동일 형태. `:uid` 바인드 고정, uid `^\d{3,}$` 검증, IP당 20 req/min, CORS는 `ALLOW_ORIGIN`만.
+- DB는 기존 `healthweb` 유저·기존 wallet 재사용 (wallet은 DB 단위라 유저 무관).
+- `api/README.md` 에 로컬 테스트·VM 배포 절차. 서비스 유닛 `api/healthweb-api.service`, 프록시 `api/Caddyfile`.
+- 프론트: `app.js` 상단 `LIVE_API` 상수에 도메인 지정 → 버튼 노출. 빈 문자열이면 숨김(현재 상태).
+- 실패 시(API·터널 다운) 프론트는 배너만 띄우고 커밋된 JSON 데이터를 유지.
+
+### VM 배포 (수동 1회 — `api/README.md` 상세)
+
+1. OCI 콘솔: 공용 IP를 **Reserved**로 승격, Security List Ingress에 TCP 80·443
+2. VM iptables: 80·443 ACCEPT를 REJECT 룰 위에 삽입 → `netfilter-persistent save`
+3. `scp -r api/* opc@168.107.89.8:/opt/health-web-api/` → venv + `pip install -r requirements.txt`
+4. `/opt/health-web-api/.env` (chmod 600): `DB_PASSWORD`=healthweb 비번, `DB_WALLET_PASSWORD`=wallet 비번
+5. `healthweb-api.service` 등록 → `systemctl enable --now`
+6. DuckDNS 서브도메인 → `168.107.89.8`
+7. Caddy 설치 → `Caddyfile` 배치 → `systemctl enable --now caddy` (LE 인증서 자동)
+8. `app.js` `LIVE_API` 채우고 커밋·push

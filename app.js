@@ -1,11 +1,15 @@
 "use strict";
 
 const LS_KEY = "healthweb.profile";
+// 실시간 조회 API. 예: "https://healthweb.duckdns.org" — 빈 문자열이면 새로고침 버튼 숨김
+const LIVE_API = "";
 const $ = (id) => document.getElementById(id);
 
 let chart = null;
 let allEntries = [];
 let profile = null; // { uid, target }
+let lastRefresh = 0;
+let bannerTimer = null;
 
 // ---------- 유틸 ----------
 
@@ -44,11 +48,51 @@ async function fetchUserData(uid) {
   return res.json();
 }
 
+// 새로고침: VM API에서 실시간 조회. 실패해도 화면의 마지막 갱신본은 유지.
+async function refreshNow() {
+  if (!LIVE_API || !profile?.uid) return;
+  const now = Date.now();
+  if (now - lastRefresh < 10000) {
+    banner("잠시 후 다시 시도해 주세요", "warn");
+    return;
+  }
+  const btn = $("refresh");
+  btn.disabled = true;
+  btn.classList.add("spin");
+  try {
+    const res = await fetch(`${LIVE_API}/weights?uid=${encodeURIComponent(profile.uid)}`, {
+      cache: "no-store",
+    });
+    if (!res.ok) {
+      throw new Error(res.status === 429 ? "요청이 많습니다. 잠시 후 다시" : `조회 실패 (${res.status})`);
+    }
+    const data = await res.json();
+    lastRefresh = now;
+    showDashboard(data);
+    banner("실시간 데이터로 갱신되었습니다", "ok");
+  } catch (e) {
+    banner(`${e.message || "조회 실패"} · 마지막 갱신본을 표시합니다`, "warn");
+  } finally {
+    btn.disabled = false;
+    btn.classList.remove("spin");
+  }
+}
+
+function banner(msg, kind) {
+  const el = $("banner");
+  el.textContent = msg;
+  el.className = "banner" + (kind ? " " + kind : "");
+  el.hidden = false;
+  clearTimeout(bannerTimer);
+  if (kind === "ok") bannerTimer = setTimeout(() => (el.hidden = true), 4000);
+}
+
 // ---------- 화면 전환 ----------
 
 function showRegister(errMsg) {
   $("dashboard").hidden = true;
   $("register").hidden = false;
+  $("banner").hidden = true;
   const e = $("register-error");
   if (errMsg) {
     e.textContent = errMsg;
@@ -61,6 +105,7 @@ function showRegister(errMsg) {
 function showDashboard(data) {
   $("register").hidden = true;
   $("dashboard").hidden = false;
+  $("refresh").hidden = !LIVE_API;
   allEntries = (data.entries || []).slice().sort((a, b) => key(a).localeCompare(key(b)));
   $("updated").textContent = fmtUpdated(data.updated_at);
   renderStats();
@@ -265,6 +310,8 @@ $("register-form").addEventListener("submit", async (ev) => {
     btn.textContent = "조회";
   }
 });
+
+$("refresh").addEventListener("click", refreshNow);
 
 $("logout").addEventListener("click", () => {
   clearProfile();

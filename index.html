@@ -36,8 +36,13 @@
     <section id="dashboard" hidden>
       <header class="dash-head">
         <h1>몸무게 기록</h1>
-        <button id="logout" class="ghost" type="button">다른 ID로 보기</button>
+        <div class="dash-actions">
+          <button id="refresh" class="ghost" type="button" hidden>↻ 새로고침</button>
+          <button id="logout" class="ghost" type="button">다른 ID로 보기</button>
+        </div>
       </header>
+
+      <p id="banner" class="banner" hidden></p>
 
       <div id="stats" class="stats"></div>
 

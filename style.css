@@ -61,6 +61,20 @@ button.on { background: var(--accent); color: #fff; }
 
 /* 대시보드 */
 .dash-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.dash-actions { display: flex; gap: 6px; flex-shrink: 0; }
+#refresh.spin { animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  #refresh.spin { animation: none; opacity: .55; }
+}
+
+.banner {
+  margin: 12px 0 0; padding: 8px 12px;
+  border-radius: 8px; font-size: .86rem;
+  border: 1px solid var(--border); background: var(--card);
+}
+.banner.ok { background: var(--accent-soft); color: var(--accent); border-color: transparent; }
+.banner.warn { background: var(--accent-soft); color: var(--error); border-color: transparent; }
 .stats {
   display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
   gap: 10px; margin: 16px 0;
