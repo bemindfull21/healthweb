@@ -1,8 +1,8 @@
 "use strict";
 
 const LS_KEY = "healthweb.profile";
-// 실시간 조회 API. 예: "https://healthweb.duckdns.org" — 빈 문자열이면 새로고침 버튼 숨김
-const LIVE_API = "";
+// 실시간 조회 API (VM). 빈 문자열이면 새로고침 버튼 숨김
+const LIVE_API = "https://healthweb21.duckdns.org";
 const $ = (id) => document.getElementById(id);
 
 let chart = null;

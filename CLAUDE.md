@@ -63,16 +63,14 @@ health-bot이 몸무게 저장 후 GitHub에 `repository_dispatch`(event_type `h
 - `api/app.py` — FastAPI. `GET /weights?uid=<tg_user_id>` → `data/users/<hash>.json` 과 동일 형태. `:uid` 바인드 고정, uid `^\d{3,}$` 검증, IP당 20 req/min, CORS는 `ALLOW_ORIGIN`만.
 - DB는 기존 `healthweb` 유저·기존 wallet 재사용 (wallet은 DB 단위라 유저 무관).
 - `api/README.md` 에 로컬 테스트·VM 배포 절차. 서비스 유닛 `api/healthweb-api.service`, 프록시 `api/Caddyfile`.
-- 프론트: `app.js` 상단 `LIVE_API` 상수에 도메인 지정 → 버튼 노출. 빈 문자열이면 숨김(현재 상태).
-- 실패 시(API·터널 다운) 프론트는 배너만 띄우고 커밋된 JSON 데이터를 유지.
+- 프론트: `app.js` 의 `LIVE_API = "https://healthweb21.duckdns.org"` → 버튼 노출. 빈 문자열이면 숨김.
+- 실패 시(API·Caddy 다운) 프론트는 배너만 띄우고 커밋된 JSON 데이터를 유지.
 
-### VM 배포 (수동 1회 — `api/README.md` 상세)
+### VM 배포 상태 (2026-09-07 완료)
 
-1. OCI 콘솔: 공용 IP를 **Reserved**로 승격, Security List Ingress에 TCP 80·443
-2. VM iptables: 80·443 ACCEPT를 REJECT 룰 위에 삽입 → `netfilter-persistent save`
-3. `scp -r api/* opc@168.107.89.8:/opt/health-web-api/` → venv + `pip install -r requirements.txt`
-4. `/opt/health-web-api/.env` (chmod 600): `DB_PASSWORD`=healthweb 비번, `DB_WALLET_PASSWORD`=wallet 비번
-5. `healthweb-api.service` 등록 → `systemctl enable --now`
-6. DuckDNS 서브도메인 → `168.107.89.8`
-7. Caddy 설치 → `Caddyfile` 배치 → `systemctl enable --now caddy` (LE 인증서 자동)
-8. `app.js` `LIVE_API` 채우고 커밋·push
+- VM: `memo-agent` (Oracle Linux 9.8, Singapore). 소스 `/opt/health-web-api/`, venv 로컬.
+- **`healthweb-api.service`** — `uvicorn app:app --host 127.0.0.1 --port 8000`. `.env`(chmod 600)에 `healthweb`/wallet 자격증명. `healthweb` 유저 + `/opt/health-bot/wallet` 재사용.
+- **`caddy.service`** — `/etc/caddy/Caddyfile`, `healthweb21.duckdns.org` → `127.0.0.1:8000`. LE 인증서 tls-alpn-01 자동 발급/갱신.
+- 방화벽: firewalld `public` 존에 `http`·`https` 추가 (OCI Security List Ingress 80·443은 콘솔에서 별도 추가됨).
+- DuckDNS: `healthweb21` → VM 공용 IP. 갱신 스크립트 `/opt/health-web-api/duck/duck.sh` + cron `*/5`.
+- 재배포: `scp api/app.py opc@168.107.89.8:/opt/health-web-api/ && ssh ... 'sudo systemctl restart healthweb-api'`. Caddyfile 바꾸면 `sudo cp` 후 `sudo systemctl reload caddy`.
