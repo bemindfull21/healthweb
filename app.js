@@ -40,6 +40,8 @@ const fmtKg = (n) => (Math.round(n * 10) / 10).toFixed(1);
 
 // ---------- 데이터 로드 ----------
 
+// 정적 스냅샷(Pages CDN, 빠름) 우선. 없으면(404) 라이브 API로 폴백 —
+// 배치가 아직 안 돈 신규 사용자도 바로 조회되게.
 async function fetchUserData(uid) {
   const hash = await sha256Hex(String(uid).trim());
   const res = await fetch(`./data/users/${hash}.json`, { cache: "no-store" });
@@ -48,30 +50,50 @@ async function fetchUserData(uid) {
   return res.json();
 }
 
+async function fetchLive(uid) {
+  const res = await fetch(`${LIVE_API}/weights?uid=${encodeURIComponent(String(uid).trim())}`, {
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    throw new Error(res.status === 429 ? "요청이 많습니다. 잠시 후 다시" : `조회 실패 (${res.status})`);
+  }
+  return res.json();
+}
+
+async function loadUserData(uid) {
+  const staticData = await fetchUserData(uid);
+  if (staticData) return staticData;
+  if (LIVE_API) {
+    try {
+      const data = await fetchLive(uid);
+      lastRefresh = Date.now();
+      return data;
+    } catch {
+      /* 라이브도 실패하면 아래에서 null */
+    }
+  }
+  return null;
+}
+
 // 새로고침: VM API에서 실시간 조회. 실패해도 화면의 마지막 갱신본은 유지.
-async function refreshNow() {
+// silent=true 는 페이지 진입 시 자동 갱신용 — 배너/쿨다운 안내를 띄우지 않는다.
+async function refreshNow(silent = false) {
   if (!LIVE_API || !profile?.uid) return;
   const now = Date.now();
   if (now - lastRefresh < 10000) {
-    banner("잠시 후 다시 시도해 주세요", "warn");
+    if (!silent) banner("잠시 후 다시 시도해 주세요", "warn");
     return;
   }
   const btn = $("refresh");
   btn.disabled = true;
   btn.classList.add("spin");
   try {
-    const res = await fetch(`${LIVE_API}/weights?uid=${encodeURIComponent(profile.uid)}`, {
-      cache: "no-store",
-    });
-    if (!res.ok) {
-      throw new Error(res.status === 429 ? "요청이 많습니다. 잠시 후 다시" : `조회 실패 (${res.status})`);
-    }
-    const data = await res.json();
+    const data = await fetchLive(profile.uid);
     lastRefresh = now;
     showDashboard(data);
-    banner("실시간 데이터로 갱신되었습니다", "ok");
+    if (!silent) banner("실시간 데이터로 갱신되었습니다", "ok");
   } catch (e) {
-    banner(`${e.message || "조회 실패"} · 마지막 갱신본을 표시합니다`, "warn");
+    if (!silent) banner(`${e.message || "조회 실패"} · 마지막 갱신본을 표시합니다`, "warn");
   } finally {
     btn.disabled = false;
     btn.classList.remove("spin");
@@ -295,7 +317,7 @@ $("register-form").addEventListener("submit", async (ev) => {
   btn.disabled = true;
   btn.textContent = "조회 중…";
   try {
-    const data = await fetchUserData(uid);
+    const data = await loadUserData(uid);
     if (!data) {
       showRegister("해당 ID로 저장된 기록이 없습니다. 헬스봇에 몸무게를 먼저 기록해 보세요.");
       return;
@@ -303,6 +325,7 @@ $("register-form").addEventListener("submit", async (ev) => {
     profile = { uid, target: Number.isFinite(target) ? target : null };
     saveProfile(profile);
     showDashboard(data);
+    refreshNow(true);
   } catch (e) {
     showRegister(e.message || "조회에 실패했습니다.");
   } finally {
@@ -311,7 +334,7 @@ $("register-form").addEventListener("submit", async (ev) => {
   }
 });
 
-$("refresh").addEventListener("click", refreshNow);
+$("refresh").addEventListener("click", () => refreshNow(false));
 
 $("logout").addEventListener("click", () => {
   clearProfile();
@@ -329,9 +352,10 @@ document.getElementById("range").addEventListener("click", (e) => {
   profile = loadProfile();
   if (!profile?.uid) return showRegister();
   try {
-    const data = await fetchUserData(profile.uid);
+    const data = await loadUserData(profile.uid);
     if (!data) return showRegister("저장된 기록을 찾지 못했습니다.");
     showDashboard(data);
+    refreshNow(true); // 정적으로 즉시 그린 뒤 백그라운드로 실시간 갱신
   } catch (e) {
     showRegister(e.message || "조회에 실패했습니다.");
   }

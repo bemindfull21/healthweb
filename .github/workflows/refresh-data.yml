@@ -2,7 +2,8 @@ name: refresh-weight-data
 
 on:
   schedule:
-    - cron: "0 */6 * * *"          # 6시간마다 (UTC 기준)
+    - cron: "0 18 * * *"           # 매일 1회 (UTC 18:00 = KST 03:00).
+                                    # 실시간 조회는 라이브 API가 담당 — 이 스냅샷은 VM 다운 시 폴백용.
   workflow_dispatch:                # 수동 실행
   repository_dispatch:
     types: [healthbot-new-weight]   # (선택) health-bot이 새 기록 저장 시 트리거
