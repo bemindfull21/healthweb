@@ -8,81 +8,96 @@
   <link rel="stylesheet" href="./style.css" />
 </head>
 <body>
-  <main class="wrap">
-    <!-- 등록 화면 -->
-    <section id="register" hidden>
+  <main class="wrap landing">
+    <header class="hero">
       <h1>몸무게 기록</h1>
-      <p class="muted">
-        내 텔레그램 User ID로 봇에 저장된 몸무게를 조회합니다.
-        User ID는 헬스봇에게 <code>/whoami</code> 를 보내면 확인할 수 있습니다.
-      </p>
-      <form id="register-form">
-        <label>
-          텔레그램 User ID
-          <input id="uid-input" inputmode="numeric" autocomplete="off" required
-                 placeholder="예: 1234567890" />
+      <p class="muted">추세를 보기 위한 도구. 숫자에 일희일비하지 않기 위한 기록.</p>
+    </header>
+
+    <section class="auth-card">
+      <div class="tabs">
+        <button class="tab on" data-tab="login" type="button">로그인</button>
+        <button class="tab" data-tab="signup" type="button">회원가입</button>
+      </div>
+
+      <form id="form-login" class="auth-form">
+        <label>이메일
+          <input id="login-email" type="email" autocomplete="email" required />
         </label>
-        <label>
-          목표 몸무게 (kg, 선택)
-          <input id="target-input" type="number" step="0.1" min="20" max="300"
-                 autocomplete="off" placeholder="예: 68" />
+        <label>비밀번호
+          <input id="login-password" type="password" autocomplete="current-password" required />
         </label>
-        <button type="submit">조회</button>
-        <p id="register-error" class="error" hidden></p>
+        <button type="submit">로그인</button>
+        <a id="to-reset" href="#" class="link-sm">비밀번호를 잊으셨나요?</a>
+        <p id="login-msg" class="form-msg" hidden></p>
+      </form>
+
+      <form id="form-signup" class="auth-form" hidden>
+        <label>이메일
+          <input id="signup-email" type="email" autocomplete="email" required />
+        </label>
+        <label>비밀번호 (8자 이상)
+          <input id="signup-password" type="password" autocomplete="new-password" minlength="8" required />
+        </label>
+        <label>비밀번호 확인
+          <input id="signup-password2" type="password" autocomplete="new-password" required />
+        </label>
+        <label>텔레그램 User ID
+          <input id="signup-uid" inputmode="numeric" autocomplete="off" placeholder="봇에게 /whoami 로 확인" required />
+        </label>
+        <label>목표 몸무게 (kg, 선택)
+          <input id="signup-target" type="number" step="0.1" min="20" max="300" autocomplete="off" placeholder="예: 68" />
+        </label>
+        <button type="submit">가입하기</button>
+        <p id="signup-msg" class="form-msg" hidden></p>
+      </form>
+
+      <form id="form-reset" class="auth-form" hidden>
+        <p class="muted sm">가입한 이메일로 새 비밀번호를 정한 뒤, 헬스봇에게 코드를 보내면 변경됩니다.</p>
+        <label>이메일
+          <input id="reset-email" type="email" autocomplete="email" required />
+        </label>
+        <label>새 비밀번호 (8자 이상)
+          <input id="reset-password" type="password" autocomplete="new-password" minlength="8" required />
+        </label>
+        <label>새 비밀번호 확인
+          <input id="reset-password2" type="password" autocomplete="new-password" required />
+        </label>
+        <button type="submit">재설정 요청</button>
+        <a href="#" class="link-sm" data-tab="login">로그인으로 돌아가기</a>
+        <p id="reset-msg" class="form-msg" hidden></p>
       </form>
     </section>
 
-    <!-- 대시보드 -->
-    <section id="dashboard" hidden>
-      <header class="dash-head">
-        <h1>몸무게 기록</h1>
-        <div class="dash-actions">
-          <button id="refresh" class="ghost" type="button" hidden>↻ 새로고침</button>
-          <button id="logout" class="ghost" type="button">다른 ID로 보기</button>
-        </div>
-      </header>
+    <section class="essay">
+      <h2>Diet에 대하여</h2>
 
-      <p id="staleness" class="staleness" hidden>
-        <span class="dot" aria-hidden="true"></span>
-        <span id="staleness-text">실시간 연결 안 됨</span>
-        <button id="staleness-retry" type="button">다시 시도</button>
+      <h3>체중계의 숫자는 결과지 목적이 아니다</h3>
+      <p>
+        다이어트를 몸무게 관리로만 보면 매일이 시험이 된다. 내려가면 성공, 올라가면 실패.
+        이 프레임은 오래가지 못한다. 의지력은 소모되고, 한 번의 '실패'가 전부를 포기할 이유가 된다.
       </p>
 
-      <p id="banner" class="banner" hidden></p>
+      <h3>다이어트는 루틴을 만들고 몸에 배게 하는 과정이다</h3>
+      <p>
+        괜찮은 삶에는 반복되는 좋은 선택들이 깔려 있다. 비슷한 시간에 자고 일어나기,
+        끼니를 거르지 않기, 자주 움직이기, 먹은 것을 기록하기. 다이어트는 이 루틴을 설계하고
+        며칠이 아니라 몇 달에 걸쳐 익히는 일이다. 체중 변화는 그 루틴이 자리 잡았는지 알려주는
+        신호일 뿐이다.
+      </p>
 
-      <div id="stats" class="stats"></div>
-
-      <div class="panel">
-        <div class="panel-head">
-          <span>추이</span>
-          <div id="range" class="range">
-            <button data-days="7">7일</button>
-            <button data-days="30" class="on">30일</button>
-            <button data-days="90">90일</button>
-            <button data-days="0">전체</button>
-          </div>
-        </div>
-        <div class="chart-box"><canvas id="chart"></canvas></div>
-      </div>
-
-      <div class="panel">
-        <div class="panel-head"><span>기록</span></div>
-        <div class="table-scroll">
-          <table id="log">
-            <thead><tr><th>일시</th><th>몸무게</th><th>증감</th><th>오늘의 한 문장</th></tr></thead>
-            <tbody></tbody>
-          </table>
-        </div>
-      </div>
-
-      <p class="muted foot">
-        마지막 갱신: <span id="updated">-</span> ·
-        페이지를 열 때마다 실시간으로 갱신됩니다.
+      <h3>그래서 기록하고, 추세를 본다</h3>
+      <p>
+        매일의 숫자 하나에 일희일비할 필요는 없다. 2주, 한 달 단위로 방향이 맞는지,
+        루틴이 흔들린 구간은 어디인지 본다. 이 앱은 그 추세를 보기 위한 도구다.
+        목표는 특정 숫자가 아니라, 그 숫자를 더 이상 신경 쓰지 않아도 되는 삶이다.
       </p>
     </section>
+
+    <p class="muted foot">헬스봇에 몸무게를 보내면 자동으로 기록됩니다.</p>
   </main>
 
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-  <script src="./app.js"></script>
+  <script src="./config.js"></script>
+  <script src="./landing.js"></script>
 </body>
 </html>
