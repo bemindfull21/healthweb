@@ -1,7 +1,9 @@
 # /etc/caddy/Caddyfile
 # Caddy가 Let's Encrypt 인증서를 자동 발급/갱신 (포트 80/443 개방 필요).
-# 도메인은 DuckDNS 무료 서브도메인 또는 자체 도메인 A레코드 → 168.107.89.8
 healthweb21.duckdns.org {
     encode gzip
+    # 내부 전용 엔드포인트는 외부에서 차단 (health-bot은 127.0.0.1로 직접 호출)
+    @internal path /internal/*
+    respond @internal 404
     reverse_proxy 127.0.0.1:8000
 }
