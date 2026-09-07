@@ -1,0 +1,11 @@
+.env
+*.key
+wallet/
+wallet.zip
+wallet_b64.txt
+__pycache__/
+*.pyc
+.venv/
+venv/
+.claude/
+.DS_Store

@@ -1,0 +1,54 @@
+name: 몸무게 데이터 갱신
+
+on:
+  schedule:
+    - cron: "0 */6 * * *"          # 6시간마다 (UTC 기준)
+  workflow_dispatch:                # 수동 실행
+  repository_dispatch:
+    types: [healthbot-new-weight]   # (선택) health-bot이 새 기록 저장 시 트리거
+
+permissions:
+  contents: write
+
+concurrency:
+  group: refresh-data
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Wallet 복원
+        run: |
+          echo "${{ secrets.WALLET_ZIP_B64 }}" | base64 -d > wallet.zip
+          mkdir -p wallet && unzip -o -q wallet.zip -d wallet
+
+      - name: 의존성 설치
+        run: pip install -r scripts/requirements.txt
+
+      - name: weight_log 내보내기
+        env:
+          DB_USER: healthweb
+          DB_DSN: shindb_low
+          DB_WALLET_LOCATION: wallet
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+          DB_WALLET_PASSWORD: ${{ secrets.DB_WALLET_PASSWORD }}
+        run: python scripts/export_weights.py
+
+      - name: 변경 시 커밋
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/users
+          if git diff --cached --quiet; then
+            echo "변경 없음"
+          else
+            git commit -m "데이터 갱신 $(date -u +%FT%TZ)"
+            git push
+          fi
