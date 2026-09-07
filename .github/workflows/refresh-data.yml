@@ -1,4 +1,4 @@
-name: 몸무게 데이터 갱신
+name: refresh-weight-data
 
 on:
   schedule:
@@ -25,9 +25,20 @@ jobs:
           python-version: "3.12"
 
       - name: Wallet 복원
+        env:
+          B64: ${{ secrets.WALLET_ZIP_B64 }}
         run: |
-          echo "${{ secrets.WALLET_ZIP_B64 }}" | base64 -d > wallet.zip
-          mkdir -p wallet && unzip -o -q wallet.zip -d wallet
+          set -euo pipefail
+          if [ -z "${B64:-}" ]; then
+            echo "::error::WALLET_ZIP_B64 secret이 설정되지 않았습니다."
+            exit 1
+          fi
+          printf '%s' "$B64" | tr -d '[:space:]' | base64 -d > wallet.zip
+          echo "wallet.zip: $(wc -c < wallet.zip) bytes"
+          mkdir -p wallet
+          unzip -o -q wallet.zip -d wallet
+          ls -1 wallet
+          test -f wallet/tnsnames.ora && echo "wallet OK"
 
       - name: 의존성 설치
         run: pip install -r scripts/requirements.txt
