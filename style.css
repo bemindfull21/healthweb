@@ -83,6 +83,7 @@ button.on { background: var(--accent); color: #fff; }
 .banner.warn { background: var(--accent-soft); color: var(--error); border-color: transparent; }
 
 /* 실시간 조회 실패 표시 (지속) */
+.staleness[hidden] { display: none; }
 .staleness {
   display: flex; align-items: center; gap: 8px;
   margin: 12px 0 0; padding: 9px 12px;
