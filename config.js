@@ -1,5 +1,7 @@
 "use strict";
-// index.html · app.html 공통. 빌드 없음 — 여기만 바꾸면 됨.
-const API = "https://healthweb21.duckdns.org";
-const TOKEN_KEY = "healthweb.token";
-const ME_KEY = "healthweb.me";
+// index.html · landing.js 공통. app.js(모듈)는 자체 상수 사용.
+window.HW = {
+  API: "https://healthweb21.duckdns.org",
+  TOKEN_KEY: "healthweb.token",
+  ME_KEY: "healthweb.me",
+};

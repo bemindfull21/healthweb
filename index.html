@@ -21,8 +21,8 @@
       </div>
 
       <form id="form-login" class="auth-form">
-        <label>이메일
-          <input id="login-email" type="email" autocomplete="email" required />
+        <label>아이디
+          <input id="login-username" autocomplete="username" autocapitalize="none" required />
         </label>
         <label>비밀번호
           <input id="login-password" type="password" autocomplete="current-password" required />
@@ -33,17 +33,15 @@
       </form>
 
       <form id="form-signup" class="auth-form" hidden>
-        <label>이메일
-          <input id="signup-email" type="email" autocomplete="email" required />
+        <label>아이디 <span class="hint">영문 소문자·숫자 3–20자</span>
+          <input id="signup-username" autocomplete="off" autocapitalize="none" required />
+          <span id="username-status" class="field-status"></span>
+        </label>
+        <label>이름 <span class="hint">공개되지 않음 · 비밀번호 재설정에 필요</span>
+          <input id="signup-name" autocomplete="off" required maxlength="40" />
         </label>
         <label>비밀번호 (8자 이상)
           <input id="signup-password" type="password" autocomplete="new-password" minlength="8" required />
-        </label>
-        <label>비밀번호 확인
-          <input id="signup-password2" type="password" autocomplete="new-password" required />
-        </label>
-        <label>텔레그램 User ID
-          <input id="signup-uid" inputmode="numeric" autocomplete="off" placeholder="봇에게 /whoami 로 확인" required />
         </label>
         <label>목표 몸무게 (kg, 선택)
           <input id="signup-target" type="number" step="0.1" min="20" max="300" autocomplete="off" placeholder="예: 68" />
@@ -53,17 +51,17 @@
       </form>
 
       <form id="form-reset" class="auth-form" hidden>
-        <p class="muted sm">가입한 이메일로 새 비밀번호를 정한 뒤, 헬스봇에게 코드를 보내면 변경됩니다.</p>
-        <label>이메일
-          <input id="reset-email" type="email" autocomplete="email" required />
+        <p class="muted sm">아이디와 가입 시 입력한 이름으로 새 비밀번호를 정합니다.</p>
+        <label>아이디
+          <input id="reset-username" autocomplete="username" autocapitalize="none" required />
+        </label>
+        <label>이름
+          <input id="reset-name" autocomplete="off" required />
         </label>
         <label>새 비밀번호 (8자 이상)
           <input id="reset-password" type="password" autocomplete="new-password" minlength="8" required />
         </label>
-        <label>새 비밀번호 확인
-          <input id="reset-password2" type="password" autocomplete="new-password" required />
-        </label>
-        <button type="submit">재설정 요청</button>
+        <button type="submit">비밀번호 변경</button>
         <a href="#" class="link-sm" data-tab="login">로그인으로 돌아가기</a>
         <p id="reset-msg" class="form-msg" hidden></p>
       </form>
@@ -94,7 +92,7 @@
       </p>
     </section>
 
-    <p class="muted foot">헬스봇에 몸무게를 보내면 자동으로 기록됩니다.</p>
+    <p class="muted foot">기록하고, 함께 응원한다.</p>
   </main>
 
   <script src="./config.js"></script>

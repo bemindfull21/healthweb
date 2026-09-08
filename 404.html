@@ -1,0 +1,8 @@
+<!doctype html>
+<meta charset="utf-8" />
+<script>
+  // GitHub Pages SPA 딥링크 폴백: 원래 경로를 저장하고 셸로 보낸다.
+  sessionStorage.setItem("spa_redirect", location.href);
+  var base = location.pathname.replace(/\/[^/]*$/, "");
+  location.replace(base + "/app.html");
+</script>

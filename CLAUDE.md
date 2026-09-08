@@ -6,85 +6,65 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 # health-web
 
-health-bot이 SHINDB `weight_log`에 저장한 몸무게를 조회하는 웹앱.
-정적 프론트(GitHub Pages, public repo) + VM의 인증/조회 API(FastAPI).
+체중 관리로 건강한 삶을 만드는 사람들의 커뮤니티. 몸무게 기록 + 피드/응원.
+정적 프론트(GitHub Pages `bemindfull21/healthweb`, public) + VM FastAPI.
 
-## 2페이지 구조
+## Phase 1 (2026-09-09~) — 현재
 
-| 페이지 | 내용 |
+"기록 → 공유 → 응원" 한 루프. 인증은 아이디/비밀번호, 몸무게는 웹앱 입력만(**텔레그램 봇 입력 폐기**).
+
+### 프론트
+
+| 파일 | 역할 |
 |---|---|
-| `index.html` + `landing.js` | 랜딩 — 로그인 / 회원가입 / 비밀번호 재설정 폼 + 다이어트 철학 글 |
-| `app.html` + `dashboard.js` | 대시보드 — 통계·차트·표. 토큰 없으면 `index.html`로 리다이렉트 |
-| `config.js` | 공통 (`API` URL, `TOKEN_KEY`, `ME_KEY`). **빌드 없음** — 여기만 바꾸면 됨 |
+| `index.html` + `landing.js` + `config.js` | 공개 랜딩 — 로그인/회원가입/비번재설정 + 다이어트 철학 글. 바닐라 JS |
+| `app.html` + `app.js` | 로그인 후 **SPA 셸** — Preact + htm (esm.sh, **빌드 없음**), history 라우팅 |
+| `404.html` | GH Pages 딥링크 폴백 (원 경로 sessionStorage → `app.html` → `app.js`가 복원) |
 | `style.css` | 공통 |
 
-- 로그인/가입 성공 → JWT를 `localStorage["healthweb.token"]` 저장 → `app.html`.
-- `app.html` 진입 → `GET /auth/me` (Bearer). 미인증이면 `/link` 코드 게이트, 인증이면 `GET /weights` → 렌더.
-- `401` 응답 → 토큰 삭제 후 랜딩으로. API 다운 → 캐시된 `me` + 정적 스냅샷 폴백 + `#staleness` 표시.
+- 로그인/가입 → JWT를 `localStorage["healthweb.token"]` → `app.html`. `401` → 토큰 삭제 후 랜딩.
+- 라우트: `/feed`(전역 피드) · `/me`(차트·표·입력) · `/p/:id`(글 상세) · `/u/:handle`(프로필) · `/settings`.
+- 탭바 P1은 **피드 · ＋ · 나** 3개. ＋ = 액션 시트(몸무게 기록 / 글쓰기).
+- `app.js`의 `const API` + `config.js`의 `window.HW.API` 를 로컬 테스트 시 `http://localhost:8971`로 바꿔서 검증.
 
-## 인증 (`api/app.py`)
+### API (`api/app.py`)
 
-email/password 계정. 텔레그램 소유권은 봇으로 검증(**결정 1-B**).
+아이디(`^[a-z0-9]{3,20}$`, 소문자 정규화) / 비밀번호. JWT `sub` = username.
 
-| 엔드포인트 | 설명 |
+| 그룹 | 엔드포인트 |
 |---|---|
-| `POST /auth/signup` | email·pw(8+)·tg_user_id(+목표) → `app_user`(verified=N) + `/link` 코드 → JWT |
-| `POST /auth/signin` | email·pw → JWT. 레이트리밋: email 5회/15분 + IP 15회/분 |
-| `POST /auth/reset` | email·새 pw → `verify_code`에 새 해시 저장 + `/reset` 코드 (봇 확인 후 반영) |
-| `GET /auth/me` | Bearer → 계정 정보. 미인증이면 활성 `link_code` 포함 |
-| `GET /weights` | Bearer(+verified) → **토큰의 tg_user_id**로 `admin.weight_log` 조회 (`?uid=` 없음) |
-| `POST /internal/link` | health-bot 전용(`X-Internal-Key`) — `verify_code` 대조 → `verified=Y` |
-| `POST /internal/reset` | health-bot 전용 — `verify_code` 대조 → `password_hash` 교체 |
+| 인증 | `GET /auth/username-available` · `POST /auth/signup` (username·user_name·password·target_weight) · `/auth/signin` · `/auth/reset` (username + **user_name 일치**로 재설정) · `GET /auth/me` · `PATCH /auth/me` |
+| 몸무게 | `GET/POST /weights` · `DELETE /weights/:id` (연결 글은 링크만 끊음) |
+| 커뮤니티 | `GET /feed?cursor=` · `POST /posts` · `GET /posts/:id` · `POST/DELETE /posts/:id/encourage` · `POST /posts/:id/comments` · `DELETE /posts/:id` · `GET /u/:handle` |
 
-- bcrypt 해시, JWT(HS256, 7일). `.env`에 `JWT_SECRET`·`INTERNAL_KEY` (openssl rand로 각각 생성, 공유 비번 재사용 금지).
-- `/internal/*` 은 Caddy에서 외부 404 (`@internal path /internal/*` → `respond 404`). health-bot은 `http://127.0.0.1:8000` 직접 호출.
-- 코드 만료(10분) 비교는 **naive UTC 바인드**(`code_cutoff()`) — `systimestamp`를 WHERE에 쓰면 python-oracledb 세션 TZ로 암묵 변환돼 어긋난다(ADB server=UTC).
+- bcrypt · PyJWT(HS256, 7일). `user_name`은 비공개(재설정 확인용), 공개 handle = username.
+- `weight_privacy`(`private`/`trend`/`public`): 프로필의 몸무게 노출 + `log` 글의 weight 표시 여부(`public`만).
+- 코드/시각: `parse_dt`는 사용자 벽시계 시각 그대로 저장(naive). `iso_z` 응답.
+- 전역 `@app.exception_handler(Exception)` → `{"detail": ...}` JSON 500.
 
-### health-bot 연동
+### DB (`healthweb` 스키마)
 
-health-bot `main.py`에 `/link <코드>` `/reset <코드>` 명령. 6자리 코드 + `str(update.effective_user.id)`를
-`/internal/*`에 POST. `INTERNAL_KEY` env 필요 (`/opt/health-bot/.env` = `/opt/health-web-api/.env` 와 동일 값).
+`sql/010_phase1_schema.sql` (**적용됨** — ADMIN으로 실행, `grant create sequence` 포함):
+`app_user`(username PK · user_name · password_hash · bio · target_weight · weight_privacy) ·
+`weight_entry`(username · logged_at · weight · note) ·
+`post`(username · kind · body · weight_entry_id) · `encouragement`(PK post_id+username) · `post_comment`.
+`verify_code` · 구 `app_user`(email/tg) drop됨.
 
-## DB (SHINDB, `healthweb` 유저)
+`sql/011_migrate_owner_weights.sql` — 오너가 가입 후 `<USERNAME>` 바꿔 실행 (구 텔레그램 이력 → weight_entry).
 
-`healthweb` — `grant connect`, `grant select on admin.weight_log`, `grant create table` + quota 50m.
+## VM 배포 (memo-agent)
 
-| 객체 | 용도 | SQL |
-|---|---|---|
-| `admin.weight_log` | 몸무게 원천 (읽기만) | — |
-| `healthweb.app_user` | 웹 계정 (email·hash·tg_user_id·verified·target_weight) | `sql/002_app_user.sql` |
-| `healthweb.verify_code` | link/reset 코드 (purpose·email·tg_user_id·new_hash·consumed) | `sql/003_verify_code.sql` |
+- `/opt/health-web-api/` : `healthweb-api.service`(uvicorn :8000) + `caddy.service`(`healthweb21.duckdns.org`).
+- `.env`: DB 자격증명 + `JWT_SECRET` + `ALLOW_ORIGIN=https://bemindfull21.github.io`. (`INTERNAL_KEY`는 Phase 1에서 미사용)
+- 재배포: `scp api/app.py opc@168.107.89.8:/opt/health-web-api/ && ssh ... 'sudo systemctl restart healthweb-api'`.
 
-wallet은 [[healthbot-autonomous-db]]와 동일(공용 `_shared/wallets/SHINDB`). Actions엔 `WALLET_ZIP_B64` Secret.
+## 폐기됨
 
-## 두 조회 경로 (배치 폴백 + 실시간)
+- **텔레그램 봇 몸무게 입력** — `health-bot`의 `handle_message` 저장 로직 · `save_to_db` · `/link` · `/reset` 핸들러. 봇 완전 은퇴는 미결.
+- **배치 ETL** — `refresh-data.yml` · `scripts/` · `data/users/*.json`. Phase 1은 API 직결만(정적 폴백 없음).
+- 이메일 인증, 텔레그램 검증(`verify_code`), `dashboard.js`(→ `app.js`로 흡수).
 
-```
-[배치·폴백]  weight_log ──(매일 1회 UTC18 / 수동 / repository_dispatch)──▶ scripts/export_weights.py
-             ──▶ data/users/<sha256(tg_user_id)>.json 커밋 ──▶ Pages
-[실시간]     weight_log ──▶ VM: Caddy(healthweb21.duckdns.org) → uvicorn:8000 ──▶ GET /weights
-```
+## 미완 (Phase 2+)
 
-- **배치의 역할**: 최신성 아님 — VM 다운 시 폴백 + 방문/스캐너 트래픽이 DB로 안 가게. 하루 1회면 충분.
-- 대시보드는 **실시간 우선**. `GET /weights` 실패 시 `fetchStatic(tg_user_id)` → `data/users/<hash>.json`.
-  성공하면 `#staleness` 지속 표시("실시간 연결 안 됨 · 마지막 갱신 N시간 전 · [다시 시도]"), 429는 제외.
-- `scripts/export_weights.py` 쿼리 = API의 `WEIGHT_QUERY` 와 동일 컬럼·조건. 응답 형태도 동일:
-  `{updated_at, count, entries:[{date,time,weight,quote}]}`.
-
-## VM 배포 (memo-agent, Oracle Linux 9.8, Singapore)
-
-- 소스 `/opt/health-web-api/` (app.py·venv·`.env` chmod 600·`duck/`).
-- **`healthweb-api.service`** — `uvicorn app:app --host 127.0.0.1 --port 8000`.
-- **`caddy.service`** — `/etc/caddy/Caddyfile`. LE 인증서 tls-alpn-01 자동.
-- 방화벽: OCI Security List 80·443 + firewalld `http`/`https`.
-- DuckDNS: `healthweb21` → 공용 IP(ephemeral 유지). 갱신 `/opt/health-web-api/duck/duck.sh` + cron `*/5`.
-- **재배포**: `scp api/app.py opc@168.107.89.8:/opt/health-web-api/ && ssh ... 'sudo systemctl restart healthweb-api'`.
-  Caddyfile 바꾸면 `sudo cp` 후 `sudo systemctl reload caddy`. deps 바뀌면 `./venv/bin/pip install -r requirements.txt`.
-- health-bot 재배포: `scp main.py opc@...:/opt/health-bot/ && ssh ... 'sudo systemctl restart healthbot'`
-  (모듈 로드 시 gspread 초기화라 Google 503이면 첫 기동 실패 → systemd가 재시작해 성공).
-
-## (선택) 미완
-
-- 대시보드를 켜둔 채로는 자동 갱신 안 됨(폴링/SSE 없음) — 열 때만 당겨옴.
-- 봇 `repository_dispatch` 미연결 — 폴백 스냅샷 조기 갱신용, 우선순위 낮음.
-- 이메일 인증 메일 없음(email = 사실상 아이디). 비번 재설정은 봇 경유.
+챌린지 · 팔로우 · 알림 탭 · 그룹 · 검색 · 사진(오브젝트 스토리지) · 리치 프로필.
+설계: 커뮤니티 IA / Phase 1 상세 설계 아트팩트 (메모리 참조).
