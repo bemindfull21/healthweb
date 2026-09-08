@@ -25,19 +25,20 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - 로그인/가입 → JWT를 `localStorage["healthweb.token"]` → `app.html`. `401` → 토큰 삭제 후 랜딩.
 - 라우트: `/feed`(전역 피드) · `/me`(차트·표·입력) · `/p/:id`(글 상세) · `/u/:handle`(프로필) · `/settings`.
 - 탭바 P1은 **피드 · ＋ · 나** 3개. ＋ = 액션 시트(몸무게 기록 / 글쓰기).
-- `app.js`의 `const API` + `config.js`의 `window.HW.API` 를 로컬 테스트 시 `http://localhost:8971`로 바꿔서 검증.
+- `sql/010` 재실행 시 기존 테이블 drop됨(login_id/name 컬럼). `app.js`의 `const API` + `config.js`의 `window.HW.API` 를 로컬 테스트 시 `http://localhost:8971`로 바꿔서 검증.
 
 ### API (`api/app.py`)
 
-아이디(`^[a-z0-9]{3,20}$`, 소문자 정규화) / 비밀번호. JWT `sub` = username.
+**로그인 아이디**(`login_id`, `^[a-z0-9]{3,20}$` 소문자, **비공개**) / 비밀번호.
+**이름**(`name`)이 공개 handle — 피드·프로필·`/u/:name` URL. 둘 다 unique. JWT `sub` = login_id.
 
 | 그룹 | 엔드포인트 |
 |---|---|
-| 인증 | `GET /auth/username-available` · `POST /auth/signup` (username·user_name·password·target_weight) · `/auth/signin` · `/auth/reset` (username + **user_name 일치**로 재설정) · `GET /auth/me` · `PATCH /auth/me` |
+| 인증 | `GET /auth/check?login_id=&name=` (둘 다 중복확인) · `POST /auth/signup` (login_id·name·password·target_weight) · `/auth/signin` · `/auth/reset` (login_id + **name 일치**) · `GET/PATCH /auth/me` |
 | 몸무게 | `GET/POST /weights` · `DELETE /weights/:id` (연결 글은 링크만 끊음) |
 | 커뮤니티 | `GET /feed?cursor=` · `POST /posts` · `GET /posts/:id` · `POST/DELETE /posts/:id/encourage` · `POST /posts/:id/comments` · `DELETE /posts/:id` · `GET /u/:handle` |
 
-- bcrypt · PyJWT(HS256, 7일). `user_name`은 비공개(재설정 확인용), 공개 handle = username.
+- bcrypt · PyJWT(HS256, 7일). 회원가입 폼은 비밀번호 확인 필드 포함(프론트 검증). `login_id`는 API 응답의 공개 컨텍스트(피드/프로필/댓글)에 절대 안 나감 — `name`만.
 - `weight_privacy`(`private`/`trend`/`public`): 프로필의 몸무게 노출 + `log` 글의 weight 표시 여부(`public`만).
 - 코드/시각: `parse_dt`는 사용자 벽시계 시각 그대로 저장(naive). `iso_z` 응답.
 - 전역 `@app.exception_handler(Exception)` → `{"detail": ...}` JSON 500.
@@ -45,12 +46,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ### DB (`healthweb` 스키마)
 
 `sql/010_phase1_schema.sql` (**적용됨** — ADMIN으로 실행, `grant create sequence` 포함):
-`app_user`(username PK · user_name · password_hash · bio · target_weight · weight_privacy) ·
-`weight_entry`(username · logged_at · weight · note) ·
-`post`(username · kind · body · weight_entry_id) · `encouragement`(PK post_id+username) · `post_comment`.
-`verify_code` · 구 `app_user`(email/tg) drop됨.
+`app_user`(login_id PK · name unique · password_hash · bio · target_weight · weight_privacy) ·
+`weight_entry`(login_id · logged_at · weight · note) ·
+`post`(login_id · kind · body · weight_entry_id) · `encouragement`(PK post_id+login_id) · `post_comment`.
+`verify_code` · 구 `app_user`(email/tg, username/user_name) drop됨.
 
-`sql/011_migrate_owner_weights.sql` — 오너가 가입 후 `<USERNAME>` 바꿔 실행 (구 텔레그램 이력 → weight_entry).
+`sql/011_migrate_owner_weights.sql` — 오너가 가입 후 `<LOGIN_ID>` 바꿔 실행 (구 텔레그램 이력 → weight_entry).
 
 ## VM 배포 (memo-agent)
 

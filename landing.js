@@ -40,27 +40,28 @@ async function postJSON(path, body) {
   return { ok: res.ok, status: res.status, data: await res.json().catch(() => ({})) };
 }
 
-// ---------- 아이디 실시간 확인 ----------
-let uTimer = null;
-$("signup-username").addEventListener("input", (e) => {
-  const el = $("username-status");
-  const u = e.target.value.trim().toLowerCase();
-  clearTimeout(uTimer);
-  if (!u) { el.textContent = ""; el.className = "field-status"; return; }
-  if (!/^[a-z0-9]{3,20}$/.test(u)) {
-    el.textContent = "영문 소문자·숫자 3–20자"; el.className = "field-status bad";
-    return;
-  }
-  el.textContent = "확인 중…"; el.className = "field-status";
-  uTimer = setTimeout(async () => {
-    try {
-      const r = await fetch(`${API}/auth/username-available?u=${encodeURIComponent(u)}`);
-      const d = await r.json();
-      if (d.available) { el.textContent = "사용 가능"; el.className = "field-status ok"; }
-      else { el.textContent = d.reason || "사용할 수 없음"; el.className = "field-status bad"; }
-    } catch { el.textContent = ""; el.className = "field-status"; }
-  }, 400);
-});
+// ---------- 실시간 중복 확인 ----------
+function liveCheck(inputId, statusId, param, formatOk) {
+  let timer = null;
+  $(inputId).addEventListener("input", (e) => {
+    const el = $(statusId);
+    const v = e.target.value.trim();
+    clearTimeout(timer);
+    if (!v) { el.textContent = ""; el.className = "field-status"; return; }
+    if (!formatOk(v)) { el.textContent = "형식을 확인하세요"; el.className = "field-status bad"; return; }
+    el.textContent = "확인 중…"; el.className = "field-status";
+    timer = setTimeout(async () => {
+      try {
+        const r = await fetch(`${API}/auth/check?${param}=${encodeURIComponent(v)}`);
+        const d = (await r.json())[param];
+        if (d.available) { el.textContent = "사용 가능"; el.className = "field-status ok"; }
+        else { el.textContent = d.reason || "사용할 수 없음"; el.className = "field-status bad"; }
+      } catch { el.textContent = ""; el.className = "field-status"; }
+    }, 400);
+  });
+}
+liveCheck("signup-loginid", "loginid-status", "login_id", (v) => /^[a-z0-9]{3,20}$/.test(v.toLowerCase()));
+liveCheck("signup-name", "name-status", "name", (v) => v.length >= 2 && v.length <= 20 && !/[/@]/.test(v));
 
 // ---------- 로그인 ----------
 $("form-login").addEventListener("submit", async (e) => {
@@ -68,7 +69,7 @@ $("form-login").addEventListener("submit", async (e) => {
   const btn = e.submitter || e.target.querySelector('button[type="submit"]');
   btn.disabled = true;
   const { ok, data } = await postJSON("/auth/signin", {
-    username: $("login-username").value.trim().toLowerCase(),
+    login_id: $("login-loginid").value.trim().toLowerCase(),
     password: $("login-password").value,
   });
   btn.disabled = false;
@@ -81,14 +82,15 @@ $("form-login").addEventListener("submit", async (e) => {
 $("form-signup").addEventListener("submit", async (e) => {
   e.preventDefault();
   const m = $("signup-msg");
-  const u = $("signup-username").value.trim().toLowerCase();
-  if (!/^[a-z0-9]{3,20}$/.test(u)) return msg(m, "아이디는 영문 소문자·숫자 3–20자입니다", "err");
-  const name = $("signup-name").value.trim();
-  if (!name) return msg(m, "이름을 입력해 주세요", "err");
+  const lid = $("signup-loginid").value.trim().toLowerCase();
+  if (!/^[a-z0-9]{3,20}$/.test(lid)) return msg(m, "아이디는 영문 소문자·숫자 3–20자입니다", "err");
+  const name = $("signup-name").value.trim().replace(/\s+/g, " ");
+  if (name.length < 2 || name.length > 20 || /[/@]/.test(name)) return msg(m, "이름은 2–20자이고 / @ 는 쓸 수 없습니다", "err");
   const pw = $("signup-password").value;
   if (pw.length < 8) return msg(m, "비밀번호는 8자 이상이어야 합니다", "err");
+  if (pw !== $("signup-password2").value) return msg(m, "비밀번호가 일치하지 않습니다", "err");
 
-  const body = { username: u, user_name: name, password: pw };
+  const body = { login_id: lid, name, password: pw };
   const tw = $("signup-target").value.trim();
   if (tw) body.target_weight = parseFloat(tw);
 
@@ -110,8 +112,8 @@ $("form-reset").addEventListener("submit", async (e) => {
   const btn = e.submitter || e.target.querySelector('button[type="submit"]');
   btn.disabled = true;
   const { ok, data } = await postJSON("/auth/reset", {
-    username: $("reset-username").value.trim().toLowerCase(),
-    user_name: $("reset-name").value.trim(),
+    login_id: $("reset-loginid").value.trim().toLowerCase(),
+    name: $("reset-name").value.trim().replace(/\s+/g, " "),
     new_password: pw,
   });
   btn.disabled = false;

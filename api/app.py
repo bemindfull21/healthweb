@@ -1,13 +1,12 @@
 """health-web API — Phase 1 (커뮤니티).
 
-인증: 아이디(username, 영문+숫자 소문자) / 비밀번호. 이메일·텔레그램 없음.
-비밀번호 재설정: username + user_name(비공개) 일치 확인.
-몸무게: healthweb.weight_entry (키 = username). 텔레그램 입력 폐기.
-커뮤니티: post / encouragement / post_comment. 피드는 P1에서 전역 최신순.
+계정: 로그인 아이디(login_id, 영문+숫자 소문자, 비공개) / 비밀번호.
+      이름(name)이 공개 handle — 피드·프로필·URL. login_id·name 둘 다 unique.
+      비밀번호 재설정: login_id + name 일치 확인.
+몸무게: healthweb.weight_entry (키 = login_id). 커뮤니티: post / encouragement / post_comment.
 
 127.0.0.1 바인드, 앞단 Caddy(HTTPS).
-필요 env: DB_USER DB_PASSWORD DB_DSN DB_WALLET_LOCATION DB_WALLET_PASSWORD
-          ALLOW_ORIGIN JWT_SECRET
+필요 env: DB_USER DB_PASSWORD DB_DSN DB_WALLET_LOCATION DB_WALLET_PASSWORD ALLOW_ORIGIN JWT_SECRET
 """
 from __future__ import annotations
 
@@ -26,7 +25,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-USERNAME_RE = re.compile(r"^[a-z0-9]{3,20}$")
+LOGIN_ID_RE = re.compile(r"^[a-z0-9]{3,20}$")
 JWT_ALG = "HS256"
 JWT_TTL = dt.timedelta(days=7)
 MIN_WEIGHT, MAX_WEIGHT = 20.0, 300.0
@@ -104,7 +103,6 @@ def dml(sql: str, **b) -> int:
 
 
 def insert_id(sql: str, **b) -> int:
-    """... returning id into :new_id 형태 insert. 새 id 반환."""
     assert pool is not None
     with pool.acquire() as conn, conn.cursor() as cur:
         new_id = cur.var(oracledb.NUMBER)
@@ -126,10 +124,10 @@ def check_pw(pw: str, h: str) -> bool:
         return False
 
 
-def make_jwt(username: str) -> str:
+def make_jwt(login_id: str) -> str:
     now = dt.datetime.now(dt.timezone.utc)
     return jwt.encode(
-        {"sub": username, "iat": now, "exp": now + JWT_TTL},
+        {"sub": login_id, "iat": now, "exp": now + JWT_TTL},
         os.environ["JWT_SECRET"],
         algorithm=JWT_ALG,
     )
@@ -145,13 +143,20 @@ def current_user(authorization: str = Header(default="")) -> dict:
     except jwt.PyJWTError:
         raise HTTPException(401, "세션이 만료되었습니다. 다시 로그인해 주세요")
     u = q1(
-        "select username, user_name, bio, target_weight, weight_privacy "
-        "from healthweb.app_user where username = :u",
-        u=payload.get("sub"),
+        "select login_id, name, bio, target_weight, weight_privacy "
+        "from healthweb.app_user where login_id = :lid",
+        lid=payload.get("sub"),
     )
     if u is None:
         raise HTTPException(401, "존재하지 않는 계정입니다")
     return u
+
+
+def clean_name(raw: str) -> str:
+    n = " ".join(raw.split())  # 연속 공백/개행 정리
+    if not (2 <= len(n) <= 20) or "/" in n or "@" in n:
+        raise HTTPException(400, "이름은 2–20자이고 / @ 는 쓸 수 없습니다")
+    return n
 
 
 # ---------- 레이트리밋 ----------
@@ -174,7 +179,6 @@ def ip(request: Request) -> str:
 
 
 def parse_dt(s: Optional[str]) -> dt.datetime:
-    """사용자가 보낸 벽시계 시각. 실패 시 서버 UTC now (naive)."""
     if s:
         for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
             try:
@@ -186,32 +190,34 @@ def parse_dt(s: Optional[str]) -> dt.datetime:
 
 def iso_z(d: Optional[dt.datetime] = None) -> str:
     d = d or dt.datetime.now(dt.timezone.utc)
-    return d.astimezone(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ") if d.tzinfo else d.strftime("%Y-%m-%dT%H:%M:%SZ")
+    if d.tzinfo:
+        return d.astimezone(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return d.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 # ---------- 모델 ----------
 
 class SignupIn(BaseModel):
-    username: str
-    user_name: str
+    login_id: str
+    name: str
     password: str
     target_weight: Optional[float] = None
 
 
 class SigninIn(BaseModel):
-    username: str
+    login_id: str
     password: str
 
 
 class ResetIn(BaseModel):
-    username: str
-    user_name: str
+    login_id: str
+    name: str
     new_password: str
 
 
 class MePatch(BaseModel):
+    name: Optional[str] = None
     bio: Optional[str] = None
-    user_name: Optional[str] = None
     target_weight: Optional[float] = None
     weight_privacy: Optional[str] = None
     current_password: Optional[str] = None
@@ -244,23 +250,33 @@ def healthz() -> dict:
 
 # ---------- 인증 ----------
 
-@app.get("/auth/username-available")
-def username_available(u: str) -> dict:
-    u = u.strip().lower()
-    if not USERNAME_RE.match(u):
-        return {"available": False, "reason": "영문 소문자·숫자 3–20자"}
-    taken = q1("select 1 as x from healthweb.app_user where username = :u", u=u)
-    return {"available": taken is None, "reason": None if taken is None else "이미 사용 중"}
+@app.get("/auth/check")
+def check(login_id: Optional[str] = None, name: Optional[str] = None) -> dict:
+    out: dict = {}
+    if login_id is not None:
+        lid = login_id.strip().lower()
+        if not LOGIN_ID_RE.match(lid):
+            out["login_id"] = {"available": False, "reason": "영문 소문자·숫자 3–20자"}
+        else:
+            taken = q1("select 1 as x from healthweb.app_user where login_id = :v", v=lid)
+            out["login_id"] = {"available": taken is None, "reason": None if taken is None else "이미 사용 중"}
+    if name is not None:
+        try:
+            n = clean_name(name)
+        except HTTPException:
+            out["name"] = {"available": False, "reason": "2–20자 · / @ 불가"}
+        else:
+            taken = q1("select 1 as x from healthweb.app_user where lower(name) = lower(:v)", v=n)
+            out["name"] = {"available": taken is None, "reason": None if taken is None else "이미 사용 중"}
+    return out
 
 
 @app.post("/auth/signup")
 def signup(body: SignupIn, request: Request) -> dict:
-    username = body.username.strip().lower()
-    user_name = body.user_name.strip()
-    if not USERNAME_RE.match(username):
+    lid = body.login_id.strip().lower()
+    name = clean_name(body.name)
+    if not LOGIN_ID_RE.match(lid):
         raise HTTPException(400, "아이디는 영문 소문자·숫자 3–20자입니다")
-    if not (1 <= len(user_name) <= 40):
-        raise HTTPException(400, "이름을 입력해 주세요 (40자 이내)")
     if len(body.password) < 8:
         raise HTTPException(400, "비밀번호는 8자 이상이어야 합니다")
     tw = body.target_weight
@@ -269,47 +285,49 @@ def signup(body: SignupIn, request: Request) -> dict:
     if not rate_ok(f"signup:{ip(request)}", 5, 3600):
         raise HTTPException(429, "가입 시도가 많습니다. 잠시 후 다시 시도해 주세요")
 
-    if q1("select 1 as x from healthweb.app_user where username = :u", u=username):
+    if q1("select 1 as x from healthweb.app_user where login_id = :v", v=lid):
         raise HTTPException(409, "이미 사용 중인 아이디입니다")
+    if q1("select 1 as x from healthweb.app_user where lower(name) = lower(:v)", v=name):
+        raise HTTPException(409, "이미 사용 중인 이름입니다")
     try:
         dml(
-            "insert into healthweb.app_user (username, user_name, password_hash, target_weight) "
-            "values (:u, :n, :h, :t)",
-            u=username, n=user_name, h=hash_pw(body.password), t=tw,
+            "insert into healthweb.app_user (login_id, name, password_hash, target_weight) "
+            "values (:l, :n, :h, :t)",
+            l=lid, n=name, h=hash_pw(body.password), t=tw,
         )
     except oracledb.IntegrityError:
-        raise HTTPException(409, "이미 사용 중인 아이디입니다")
-    return {"token": make_jwt(username), "username": username}
+        raise HTTPException(409, "이미 사용 중인 아이디 또는 이름입니다")
+    return {"token": make_jwt(lid), "login_id": lid, "name": name}
 
 
 @app.post("/auth/signin")
 def signin(body: SigninIn, request: Request) -> dict:
-    username = body.username.strip().lower()
-    if not rate_ok(f"signin-ip:{ip(request)}", 20, 60) or not rate_ok(f"signin-u:{username}", 5, 900):
+    lid = body.login_id.strip().lower()
+    if not rate_ok(f"signin-ip:{ip(request)}", 20, 60) or not rate_ok(f"signin:{lid}", 5, 900):
         raise HTTPException(429, "로그인 시도가 많습니다. 15분 후 다시 시도해 주세요")
     u = q1(
-        "select username, password_hash from healthweb.app_user where username = :u",
-        u=username,
+        "select login_id, name, password_hash from healthweb.app_user where login_id = :v",
+        v=lid,
     )
     if u is None or not check_pw(body.password, u["password_hash"]):
         raise HTTPException(401, "아이디 또는 비밀번호가 올바르지 않습니다")
-    dml("update healthweb.app_user set last_login_at = systimestamp where username = :u", u=username)
-    return {"token": make_jwt(username), "username": username}
+    dml("update healthweb.app_user set last_login_at = systimestamp where login_id = :v", v=lid)
+    return {"token": make_jwt(lid), "login_id": lid, "name": u["name"]}
 
 
 @app.post("/auth/reset")
 def reset(body: ResetIn, request: Request) -> dict:
-    username = body.username.strip().lower()
+    lid = body.login_id.strip().lower()
     if len(body.new_password) < 8:
         raise HTTPException(400, "비밀번호는 8자 이상이어야 합니다")
     if not rate_ok(f"reset:{ip(request)}", 5, 3600):
         raise HTTPException(429, "요청이 많습니다. 잠시 후 다시 시도해 주세요")
-    u = q1("select user_name from healthweb.app_user where username = :u", u=username)
-    if u is None or u["user_name"].strip().lower() != body.user_name.strip().lower():
+    u = q1("select name from healthweb.app_user where login_id = :v", v=lid)
+    if u is None or " ".join(body.name.split()).lower() != u["name"].lower():
         raise HTTPException(401, "아이디와 이름이 일치하지 않습니다")
     dml(
-        "update healthweb.app_user set password_hash = :h where username = :u",
-        h=hash_pw(body.new_password), u=username,
+        "update healthweb.app_user set password_hash = :h where login_id = :v",
+        h=hash_pw(body.new_password), v=lid,
     )
     return {"ok": True}
 
@@ -317,8 +335,8 @@ def reset(body: ResetIn, request: Request) -> dict:
 @app.get("/auth/me")
 def me(u: dict = Depends(current_user)) -> dict:
     return {
-        "username": u["username"],
-        "user_name": u["user_name"],
+        "login_id": u["login_id"],
+        "name": u["name"],
         "bio": u["bio"],
         "target_weight": float(u["target_weight"]) if u["target_weight"] is not None else None,
         "weight_privacy": u["weight_privacy"],
@@ -327,14 +345,15 @@ def me(u: dict = Depends(current_user)) -> dict:
 
 @app.patch("/auth/me")
 def patch_me(body: MePatch, u: dict = Depends(current_user)) -> dict:
-    sets, binds = [], {"u": u["username"]}
+    sets, binds = [], {"v": u["login_id"]}
+    if body.name is not None:
+        n = clean_name(body.name)
+        if n.lower() != u["name"].lower():
+            if q1("select 1 as x from healthweb.app_user where lower(name) = lower(:n)", n=n):
+                raise HTTPException(409, "이미 사용 중인 이름입니다")
+        sets.append("name = :n"); binds["n"] = n
     if body.bio is not None:
         sets.append("bio = :bio"); binds["bio"] = body.bio.strip()[:200] or None
-    if body.user_name is not None:
-        n = body.user_name.strip()
-        if not (1 <= len(n) <= 40):
-            raise HTTPException(400, "이름은 40자 이내입니다")
-        sets.append("user_name = :n"); binds["n"] = n
     if body.target_weight is not None:
         if not (MIN_WEIGHT <= body.target_weight <= MAX_WEIGHT):
             raise HTTPException(400, "목표 몸무게가 범위를 벗어났습니다")
@@ -346,13 +365,13 @@ def patch_me(body: MePatch, u: dict = Depends(current_user)) -> dict:
     if body.new_password is not None:
         if len(body.new_password) < 8:
             raise HTTPException(400, "비밀번호는 8자 이상이어야 합니다")
-        cur = q1("select password_hash from healthweb.app_user where username = :u", u=u["username"])
+        cur = q1("select password_hash from healthweb.app_user where login_id = :v", v=u["login_id"])
         if not check_pw(body.current_password or "", cur["password_hash"]):
             raise HTTPException(401, "현재 비밀번호가 올바르지 않습니다")
         sets.append("password_hash = :ph"); binds["ph"] = hash_pw(body.new_password)
 
     if sets:
-        dml(f"update healthweb.app_user set {', '.join(sets)} where username = :u", **binds)
+        dml(f"update healthweb.app_user set {', '.join(sets)} where login_id = :v", **binds)
     return {"ok": True}
 
 
@@ -362,8 +381,8 @@ def patch_me(body: MePatch, u: dict = Depends(current_user)) -> dict:
 def list_weights(u: dict = Depends(current_user)) -> dict:
     rows = qall(
         "select id, to_char(logged_at,'YYYY-MM-DD') d, to_char(logged_at,'HH24:MI:SS') t, "
-        "weight, note from healthweb.weight_entry where username = :u order by logged_at",
-        u=u["username"],
+        "weight, note from healthweb.weight_entry where login_id = :v order by logged_at",
+        v=u["login_id"],
     )
     entries = [
         {"id": r["id"], "date": r["d"], "time": r["t"], "weight": float(r["weight"]), "note": r["note"]}
@@ -373,25 +392,25 @@ def list_weights(u: dict = Depends(current_user)) -> dict:
 
 
 @app.post("/weights")
-def add_weight(body: WeightIn, request: Request, u: dict = Depends(current_user)) -> dict:
+def add_weight(body: WeightIn, u: dict = Depends(current_user)) -> dict:
     if not (MIN_WEIGHT <= body.weight <= MAX_WEIGHT):
         raise HTTPException(400, "몸무게는 20–300kg 범위입니다")
-    if not rate_ok(f"w:{u['username']}", 30, 60):
+    if not rate_ok(f"w:{u['login_id']}", 30, 60):
         raise HTTPException(429, "요청이 많습니다")
     logged = parse_dt(body.logged_at)
     note = (body.note or "").strip()[:500] or None
 
     entry_id = insert_id(
-        "insert into healthweb.weight_entry (username, logged_at, weight, note) "
-        "values (:u, :l, :w, :n) returning id into :new_id",
-        u=u["username"], l=logged, w=body.weight, n=note,
+        "insert into healthweb.weight_entry (login_id, logged_at, weight, note) "
+        "values (:l, :d, :w, :n) returning id into :new_id",
+        l=u["login_id"], d=logged, w=body.weight, n=note,
     )
     post_id = None
     if body.share:
         post_id = insert_id(
-            "insert into healthweb.post (username, kind, body, weight_entry_id) "
-            "values (:u, 'log', :b, :e) returning id into :new_id",
-            u=u["username"], b=note or "오늘도 기록했어요.", e=entry_id,
+            "insert into healthweb.post (login_id, kind, body, weight_entry_id) "
+            "values (:l, 'log', :b, :e) returning id into :new_id",
+            l=u["login_id"], b=note or "오늘도 기록했어요.", e=entry_id,
         )
     return {"id": entry_id, "post_id": post_id}
 
@@ -399,12 +418,11 @@ def add_weight(body: WeightIn, request: Request, u: dict = Depends(current_user)
 @app.delete("/weights/{entry_id}")
 def del_weight(entry_id: int, u: dict = Depends(current_user)) -> dict:
     owned = q1(
-        "select 1 as x from healthweb.weight_entry where id = :i and username = :u",
-        i=entry_id, u=u["username"],
+        "select 1 as x from healthweb.weight_entry where id = :i and login_id = :v",
+        i=entry_id, v=u["login_id"],
     )
     if owned is None:
         raise HTTPException(404, "기록을 찾을 수 없습니다")
-    # 공유 글이 이 기록을 참조하면 연결만 끊고 글은 남긴다
     dml("update healthweb.post set weight_entry_id = null where weight_entry_id = :i", i=entry_id)
     dml("delete from healthweb.weight_entry where id = :i", i=entry_id)
     return {"ok": True}
@@ -412,17 +430,17 @@ def del_weight(entry_id: int, u: dict = Depends(current_user)) -> dict:
 
 # ---------- 피드 · 글 ----------
 
-def _post_row(r: dict, viewer: str) -> dict:
+def _post_row(r: dict) -> dict:
     out = {
         "id": r["id"],
-        "username": r["username"],
+        "name": r["name"],
         "kind": r["kind"],
         "body": r["body"],
         "created_at": iso_z(r["created_at"]) if r["created_at"] else None,
         "encourage_count": r.get("enc_count", 0) or 0,
         "comment_count": r.get("cmt_count", 0) or 0,
         "i_encouraged": bool(r.get("i_enc")),
-        "mine": r["username"] == viewer,
+        "mine": bool(r.get("mine")),
     }
     if r["kind"] == "log" and r.get("weight") is not None and r.get("weight_privacy") == "public":
         out["weight"] = float(r["weight"])
@@ -430,13 +448,14 @@ def _post_row(r: dict, viewer: str) -> dict:
 
 
 FEED_SQL = """
-    select p.id, p.username, p.kind, p.body, p.created_at,
+    select p.id, au.name, p.kind, p.body, p.created_at,
            we.weight, au.weight_privacy,
+           case when p.login_id = :viewer then 1 else 0 end mine,
            (select count(*) from healthweb.encouragement e where e.post_id = p.id) enc_count,
            (select count(*) from healthweb.post_comment c where c.post_id = p.id) cmt_count,
-           (select count(*) from healthweb.encouragement e where e.post_id = p.id and e.username = :viewer) i_enc
+           (select count(*) from healthweb.encouragement e where e.post_id = p.id and e.login_id = :viewer) i_enc
     from healthweb.post p
-    join healthweb.app_user au on au.username = p.username
+    join healthweb.app_user au on au.login_id = p.login_id
     left join healthweb.weight_entry we on we.id = p.weight_entry_id
     {where}
     order by p.id desc
@@ -448,11 +467,11 @@ FEED_SQL = """
 def feed(u: dict = Depends(current_user), cursor: Optional[int] = None, limit: int = 20) -> dict:
     limit = max(1, min(limit, 50))
     where = "where p.id < :cur" if cursor else ""
-    binds = {"viewer": u["username"], "lim": limit}
+    binds = {"viewer": u["login_id"], "lim": limit}
     if cursor:
         binds["cur"] = cursor
     rows = qall(FEED_SQL.format(where=where), **binds)
-    items = [_post_row(r, u["username"]) for r in rows]
+    items = [_post_row(r) for r in rows]
     return {"items": items, "next_cursor": items[-1]["id"] if len(items) == limit else None}
 
 
@@ -466,33 +485,35 @@ def create_post(body: PostIn, u: dict = Depends(current_user)) -> dict:
     eid = body.weight_entry_id
     if eid is not None:
         owned = q1(
-            "select 1 as x from healthweb.weight_entry where id = :i and username = :u",
-            i=eid, u=u["username"],
+            "select 1 as x from healthweb.weight_entry where id = :i and login_id = :v",
+            i=eid, v=u["login_id"],
         )
         if owned is None:
             eid = None
     pid = insert_id(
-        "insert into healthweb.post (username, kind, body, weight_entry_id) "
-        "values (:u, :k, :b, :e) returning id into :new_id",
-        u=u["username"], k=body.kind, b=text, e=eid,
+        "insert into healthweb.post (login_id, kind, body, weight_entry_id) "
+        "values (:l, :k, :b, :e) returning id into :new_id",
+        l=u["login_id"], k=body.kind, b=text, e=eid,
     )
     return {"id": pid}
 
 
 @app.get("/posts/{post_id}")
 def get_post(post_id: int, u: dict = Depends(current_user)) -> dict:
-    rows = qall(FEED_SQL.format(where="where p.id = :pid"), viewer=u["username"], lim=1, pid=post_id)
+    rows = qall(FEED_SQL.format(where="where p.id = :pid"), viewer=u["login_id"], lim=1, pid=post_id)
     if not rows:
         raise HTTPException(404, "글을 찾을 수 없습니다")
-    post = _post_row(rows[0], u["username"])
+    post = _post_row(rows[0])
     comments = qall(
-        "select id, username, body, created_at from healthweb.post_comment "
-        "where post_id = :p order by id",
-        p=post_id,
+        "select c.id, au.name, c.body, c.created_at, "
+        "case when c.login_id = :viewer then 1 else 0 end mine "
+        "from healthweb.post_comment c join healthweb.app_user au on au.login_id = c.login_id "
+        "where c.post_id = :p order by c.id",
+        p=post_id, viewer=u["login_id"],
     )
     post["comments"] = [
-        {"id": c["id"], "username": c["username"], "body": c["body"],
-         "created_at": iso_z(c["created_at"]), "mine": c["username"] == u["username"]}
+        {"id": c["id"], "name": c["name"], "body": c["body"],
+         "created_at": iso_z(c["created_at"]), "mine": bool(c["mine"])}
         for c in comments
     ]
     return post
@@ -504,19 +525,19 @@ def encourage(post_id: int, u: dict = Depends(current_user)) -> dict:
         raise HTTPException(404, "글을 찾을 수 없습니다")
     try:
         dml(
-            "insert into healthweb.encouragement (post_id, username) values (:p, :u)",
-            p=post_id, u=u["username"],
+            "insert into healthweb.encouragement (post_id, login_id) values (:p, :l)",
+            p=post_id, l=u["login_id"],
         )
     except oracledb.IntegrityError:
-        pass  # 이미 응원함
+        pass
     return {"ok": True}
 
 
 @app.delete("/posts/{post_id}/encourage")
 def unencourage(post_id: int, u: dict = Depends(current_user)) -> dict:
     dml(
-        "delete from healthweb.encouragement where post_id = :p and username = :u",
-        p=post_id, u=u["username"],
+        "delete from healthweb.encouragement where post_id = :p and login_id = :l",
+        p=post_id, l=u["login_id"],
     )
     return {"ok": True}
 
@@ -529,16 +550,16 @@ def add_comment(post_id: int, body: CommentIn, u: dict = Depends(current_user)) 
     if q1("select 1 as x from healthweb.post where id = :p", p=post_id) is None:
         raise HTTPException(404, "글을 찾을 수 없습니다")
     cid = insert_id(
-        "insert into healthweb.post_comment (post_id, username, body) "
-        "values (:p, :u, :b) returning id into :new_id",
-        p=post_id, u=u["username"], b=text,
+        "insert into healthweb.post_comment (post_id, login_id, body) "
+        "values (:p, :l, :b) returning id into :new_id",
+        p=post_id, l=u["login_id"], b=text,
     )
     return {"id": cid}
 
 
 @app.delete("/posts/{post_id}")
 def delete_post(post_id: int, u: dict = Depends(current_user)) -> dict:
-    owned = q1("select 1 as x from healthweb.post where id = :p and username = :u", p=post_id, u=u["username"])
+    owned = q1("select 1 as x from healthweb.post where id = :p and login_id = :l", p=post_id, l=u["login_id"])
     if owned is None:
         raise HTTPException(404, "글을 찾을 수 없습니다")
     dml("delete from healthweb.post_comment where post_id = :p", p=post_id)
@@ -549,12 +570,11 @@ def delete_post(post_id: int, u: dict = Depends(current_user)) -> dict:
 
 # ---------- 프로필 ----------
 
-def _streak(username: str) -> int:
-    """가장 최근 기록일부터 연속으로 기록이 있는 날 수."""
+def _streak(login_id: str) -> int:
     days = qall(
         "select distinct to_char(logged_at,'YYYY-MM-DD') d from healthweb.weight_entry "
-        "where username = :u order by d desc",
-        u=username,
+        "where login_id = :v order by d desc",
+        v=login_id,
     )
     if not days:
         return 0
@@ -569,28 +589,27 @@ def _streak(username: str) -> int:
 
 @app.get("/u/{handle}")
 def profile(handle: str, u: dict = Depends(current_user)) -> dict:
-    handle = handle.strip().lower()
     p = q1(
-        "select username, user_name, bio, target_weight, weight_privacy, created_at "
-        "from healthweb.app_user where username = :h",
-        h=handle,
+        "select login_id, name, bio, target_weight, weight_privacy, created_at "
+        "from healthweb.app_user where lower(name) = lower(:h)",
+        h=" ".join(handle.split()),
     )
     if p is None:
         raise HTTPException(404, "없는 사용자입니다")
 
     out = {
-        "username": p["username"],
+        "name": p["name"],
         "bio": p["bio"],
         "created_at": iso_z(p["created_at"]),
         "weight_privacy": p["weight_privacy"],
-        "streak": _streak(handle),
-        "mine": handle == u["username"],
+        "streak": _streak(p["login_id"]),
+        "mine": p["login_id"] == u["login_id"],
     }
     if p["weight_privacy"] in ("trend", "public"):
         recent = qall(
-            "select weight, logged_at from healthweb.weight_entry where username = :h "
+            "select weight, logged_at from healthweb.weight_entry where login_id = :v "
             "order by logged_at desc fetch first 20 rows only",
-            h=handle,
+            v=p["login_id"],
         )
         if recent:
             latest = float(recent[0]["weight"])
@@ -605,8 +624,8 @@ def profile(handle: str, u: dict = Depends(current_user)) -> dict:
                     out["target_weight"] = float(p["target_weight"])
 
     posts = qall(
-        FEED_SQL.format(where="where p.username = :h"),
-        viewer=u["username"], lim=30, h=handle,
+        FEED_SQL.format(where="where p.login_id = :pl"),
+        viewer=u["login_id"], lim=30, pl=p["login_id"],
     )
-    out["posts"] = [_post_row(r, u["username"]) for r in posts]
+    out["posts"] = [_post_row(r) for r in posts]
     return out

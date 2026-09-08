@@ -113,12 +113,13 @@ function TopBar({ title, onBack }) {
 }
 
 function TabBar() {
-  const { route, nav, openSheet } = useStore();
+  const { route, nav, openSheet, bump } = useStore();
   const is = (r) => route === r || (r === "/feed" && route.startsWith("/p"));
+  const go = (r) => () => (route === r ? bump() : nav(r)); // 현재 탭 다시 누르면 새로고침
   return html`<nav class="tabbar">
-    <button class=${is("/feed") ? "on" : ""} onClick=${() => nav("/feed")}>피드</button>
+    <button class=${is("/feed") ? "on" : ""} onClick=${go("/feed")}>피드</button>
     <button class="plus" onClick=${openSheet} aria-label="추가">＋</button>
-    <button class=${route === "/me" ? "on" : ""} onClick=${() => nav("/me")}>나</button>
+    <button class=${route === "/me" ? "on" : ""} onClick=${go("/me")}>나</button>
   </nav>`;
 }
 
@@ -150,7 +151,7 @@ function PostCard({ post }) {
   const { nav } = useStore();
   return html`<article class="post-card" onClick=${() => nav(`/p/${post.id}`)}>
     <div class="post-head">
-      <button class="handle" onClick=${(e) => { e.stopPropagation(); nav(`/u/${post.username}`); }}>@${post.username}</button>
+      <button class="handle" onClick=${(e) => { e.stopPropagation(); nav(`/u/${encodeURIComponent(post.name)}`); }}>${post.name}</button>
       <${KindBadge} kind=${post.kind} />
       <span class="post-time">${relTime(post.created_at)}</span>
     </div>
@@ -349,7 +350,7 @@ function PostView({ id }) {
 
   return html`<div class="view post-detail">
     <div class="post-head">
-      <button class="handle" onClick=${() => nav(`/u/${post.username}`)}>@${post.username}</button>
+      <button class="handle" onClick=${() => nav(`/u/${encodeURIComponent(post.name)}`)}>${post.name}</button>
       <${KindBadge} kind=${post.kind} />
       <span class="post-time">${relTime(post.created_at)}</span>
       ${post.mine && html`<button class="row-del" onClick=${delPost} aria-label="삭제">✕</button>`}
@@ -361,7 +362,7 @@ function PostView({ id }) {
     <div class="comments">
       <h3>댓글 ${post.comments.length || ""}</h3>
       ${post.comments.map((c) => html`<div class="comment" key=${c.id}>
-        <button class="handle" onClick=${() => nav(`/u/${c.username}`)}>@${c.username}</button>
+        <button class="handle" onClick=${() => nav(`/u/${encodeURIComponent(c.name)}`)}>${c.name}</button>
         <span class="post-time">${relTime(c.created_at)}</span>
         <p>${c.body}</p>
       </div>`)}
@@ -380,7 +381,7 @@ function ProfileView({ handle }) {
   const [state, setState] = useState("loading");
   useEffect(() => {
     setState("loading");
-    api(`/u/${handle}`).then((d) => { setP(d); setState("ok"); })
+    api(`/u/${encodeURIComponent(handle)}`).then((d) => { setP(d); setState("ok"); })
       .catch((e) => setState(e.status === 404 ? "gone" : "err"));
   }, [handle]);
 
@@ -391,9 +392,9 @@ function ProfileView({ handle }) {
   const trendTxt = { down: "▼ 감소 추세", up: "▲ 증가 추세", flat: "▬ 유지" };
   return html`<div class="view profile">
     <div class="profile-head">
-      <div class="avatar">${handle[0].toUpperCase()}</div>
+      <div class="avatar">${(p.name || "?")[0].toUpperCase()}</div>
       <div>
-        <div class="phandle">@${p.username}</div>
+        <div class="phandle">${p.name}</div>
         ${p.bio && html`<p class="pbio">${p.bio}</p>`}
       </div>
     </div>
@@ -413,20 +414,20 @@ function ProfileView({ handle }) {
 
 // ---------- 뷰: 설정 ----------
 function SettingsView() {
-  const { me, setMe, toast } = useStore();
-  const [f, setF] = useState({ user_name: "", bio: "", target_weight: "", weight_privacy: "private" });
+  const { setMe, toast } = useStore();
+  const [f, setF] = useState({ login_id: "", name: "", bio: "", target_weight: "", weight_privacy: "private" });
   const [pw, setPw] = useState({ current_password: "", new_password: "" });
   useEffect(() => {
     api("/auth/me").then((d) => {
       setMe(d);
-      setF({ user_name: d.user_name || "", bio: d.bio || "",
+      setF({ login_id: d.login_id || "", name: d.name || "", bio: d.bio || "",
         target_weight: d.target_weight ?? "", weight_privacy: d.weight_privacy || "private" });
     }).catch(() => {});
   }, []);
 
   const saveProfile = async () => {
     try {
-      const body = { user_name: f.user_name, bio: f.bio, weight_privacy: f.weight_privacy };
+      const body = { name: f.name, bio: f.bio, weight_privacy: f.weight_privacy };
       if (f.target_weight !== "") body.target_weight = parseFloat(f.target_weight);
       await api("/auth/me", { method: "PATCH", body });
       const fresh = await api("/auth/me"); setMe(fresh);
@@ -446,8 +447,10 @@ function SettingsView() {
   return html`<div class="view settings">
     <div class="panel">
       <div class="panel-head"><span>프로필</span></div>
-      <label>이름 <span class="hint">공개되지 않음 · 비밀번호 재설정에 필요</span>
-        <input value=${f.user_name} onInput=${upd("user_name")} maxlength="40" /></label>
+      <label>아이디 <span class="hint">변경 불가 · 비공개</span>
+        <input value=${f.login_id} disabled /></label>
+      <label>이름 <span class="hint">피드·프로필에 표시됨</span>
+        <input value=${f.name} onInput=${upd("name")} maxlength="20" /></label>
       <label>소개
         <input value=${f.bio} onInput=${upd("bio")} maxlength="200" placeholder="한 줄 소개" /></label>
       <label>목표 몸무게 (kg)
@@ -587,13 +590,16 @@ function App() {
   };
 
   const m = route.match(/^\/p\/(\d+)$/);
-  const up = route.match(/^\/u\/([a-z0-9]+)$/);
+  const up = route.match(/^\/u\/(.+)$/);
   let view, title = "몸무게 기록", back = null;
   if (route === "/feed") { view = html`<${FeedView} />`; title = "피드"; }
   else if (route === "/me") { view = html`<${MeView} />`; title = "나"; }
   else if (route === "/settings") { view = html`<${SettingsView} />`; title = "설정"; back = () => nav("/me"); }
   else if (m) { view = html`<${PostView} id=${m[1]} />`; title = "글"; back = () => nav("/feed"); }
-  else if (up) { view = html`<${ProfileView} handle=${up[1]} />`; title = "@" + up[1]; back = () => history.back(); }
+  else if (up) {
+    const handle = decodeURIComponent(up[1]);
+    view = html`<${ProfileView} handle=${handle} />`; title = handle; back = () => history.back();
+  }
   else { view = html`<${FeedView} />`; title = "피드"; }
 
   return html`<${Store.Provider} value=${store}>
