@@ -1,8 +1,9 @@
 <!doctype html>
 <meta charset="utf-8" />
 <script>
-  // GitHub Pages SPA 딥링크 폴백: 원래 경로를 저장하고 셸로 보낸다.
+  // GitHub Pages SPA 딥링크 폴백: 원래 경로를 저장하고 셸(app.html)로 보낸다.
+  // 프로젝트 페이지라 경로는 항상 /<repo>/... → 첫 세그먼트가 base.
   sessionStorage.setItem("spa_redirect", location.href);
-  var base = location.pathname.replace(/\/[^/]*$/, "");
+  var base = "/" + (location.pathname.split("/")[1] || "");
   location.replace(base + "/app.html");
 </script>

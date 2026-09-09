@@ -93,7 +93,7 @@ function useRoute() {
     setPath(location.pathname);
     scrollTo(0, 0);
   }, []);
-  let route = path.slice(BASE.length) || "/";
+  let route = (path.slice(BASE.length) || "/").replace(/\/+$/, "") || "/";
   if (route === "/" || route === "/app.html" || route === "/404.html") route = "/feed";
   return { route, nav };
 }
