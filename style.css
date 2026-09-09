@@ -90,7 +90,16 @@ button.on { background: var(--accent); color: #fff; }
 
 .essay { margin-bottom: 24px; }
 .essay h3 { font-size: .98rem; margin: 20px 0 6px; }
-.essay p { color: var(--text); opacity: .9; line-height: 1.7; margin: 0; }
+.essay p { color: var(--text); opacity: .9; line-height: 1.7; margin: 0 0 10px; }
+
+/* 공개 챌린지 페이지 (challenge.html) */
+.c-desc { white-space: pre-wrap; line-height: 1.7; margin: 0 0 18px; color: var(--text); opacity: .9; }
+.c-stats { display: flex; gap: 10px; margin: 18px 0; }
+.c-stats div { flex: 1; background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 14px; text-align: center; }
+.c-stats b { display: block; font-size: 1.5rem; font-weight: 700; }
+.c-stats span { color: var(--muted); font-size: .8rem; }
+.cta { display: block; text-align: center; background: var(--accent); color: #fff; text-decoration: none; font-weight: 600; padding: 12px 16px; border-radius: 10px; margin: 20px 0 0; }
+.c-note { margin-top: 14px; }
 
 /* ============ 앱 셸 ============ */
 .app-shell {
@@ -309,3 +318,41 @@ td.q { white-space: normal; color: var(--muted); font-size: .84rem; min-width: 1
 .profile-id { flex: 1; min-width: 0; }
 .profile-head > button { flex-shrink: 0; }
 .profile-stats b { color: var(--text); }
+
+/* ============ Phase 3a: 검색 · 리치 프로필 · 차단 ============ */
+.topbar-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.search-input { margin-bottom: 14px; }
+.sr { margin-bottom: 18px; }
+.sr h3 { color: var(--muted); font-size: .8rem; font-weight: 600; margin-bottom: 8px; }
+.sr-user, .sr-row {
+  display: flex; align-items: center; gap: 10px; width: 100%; text-align: left;
+  background: var(--card); color: var(--text); border: 1px solid var(--border);
+  border-radius: 10px; padding: 10px 12px; margin-bottom: 8px; font-weight: 400;
+}
+.sr-user-txt { flex: 1; min-width: 0; }
+.sr-name { font-weight: 700; font-size: .92rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sr-bio { color: var(--muted); font-size: .82rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sr-row { justify-content: space-between; }
+.sr-meta { flex-shrink: 0; color: var(--muted); font-size: .82rem; }
+.sr-tag { flex-shrink: 0; color: var(--muted); font-size: .78rem; }
+.avatar.sm { width: 32px; height: 32px; font-size: .9rem; }
+
+.profile-actions { position: relative; display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
+.menu-pop {
+  position: absolute; top: 100%; right: 0; z-index: 30; margin-top: 4px;
+  background: var(--card); border: 1px solid var(--border); border-radius: 10px;
+  box-shadow: 0 6px 18px -6px rgba(0,0,0,.3); overflow: hidden;
+}
+.menu-pop button { background: transparent; color: var(--error); font-weight: 500; padding: 10px 18px; width: 100%; }
+
+.profile-meta { display: flex; flex-wrap: wrap; gap: 4px 14px; color: var(--muted); font-size: .84rem; margin-bottom: 10px; }
+.profile-meta a { color: var(--accent); text-decoration: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+
+.sparkline { display: flex; align-items: center; gap: 10px; background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; margin-bottom: 14px; }
+.sparkline svg { flex: 1; height: 46px; min-width: 0; display: block; }
+.spark-range { flex-shrink: 0; color: var(--muted); font-size: .8rem; font-variant-numeric: tabular-nums; }
+
+.pinned-wrap { margin-bottom: 12px; }
+.pin-label { display: block; color: var(--muted); font-size: .78rem; font-weight: 600; margin-bottom: 6px; }
+.pinned-wrap .post-card { border-color: var(--accent); }

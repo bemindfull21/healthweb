@@ -1,9 +1,18 @@
 <!doctype html>
 <meta charset="utf-8" />
 <script>
-  // GitHub Pages SPA 딥링크 폴백: 원래 경로를 저장하고 셸(app.html)로 보낸다.
-  // 프로젝트 페이지라 경로는 항상 /<repo>/... → 첫 세그먼트가 base.
-  sessionStorage.setItem("spa_redirect", location.href);
-  var base = "/" + (location.pathname.split("/")[1] || "");
-  location.replace(base + "/app.html");
+  // GitHub Pages SPA 딥링크 폴백. 프로젝트 페이지라 경로는 /<repo>/... → parts[1]=repo.
+  var parts = location.pathname.split("/");
+  var base = "/" + (parts[1] || "");
+  var seg = parts[2] || "";
+  if (seg === "c" && /^\d+$/.test(parts[3] || "")) {
+    // 공개 챌린지 페이지 (로그인 불필요)
+    location.replace(base + "/challenge.html?id=" + parts[3]);
+  } else if (seg === "about") {
+    location.replace(base + "/about.html");
+  } else {
+    // 로그인 후 SPA 딥링크: 원 경로 저장 → 셸(app.html) → app.js 가 복원
+    sessionStorage.setItem("spa_redirect", location.href);
+    location.replace(base + "/app.html");
+  }
 </script>

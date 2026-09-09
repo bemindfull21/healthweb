@@ -40,8 +40,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | 팔로우 (P2) | `POST/DELETE /u/:handle/follow` · `GET /u/:handle/{followers|following}` |
 | 챌린지 (P2) | `GET/POST /challenges` · `GET /challenges/:id` · `POST /challenges/:id/join` · `DELETE .../leave` · `POST .../checkin` (`{date}`) · `DELETE .../checkin/:date` |
 | 알림 (P2) | `GET /notifications?cursor=` · `GET /notifications/unread-count` · `POST /notifications/read` |
+| 검색·차단 (P3a) | `GET /search?q=` → `{users,challenges,posts}` (LIKE, 각 12개) · `POST/DELETE /u/:handle/block` |
+| 공개 (P3a) | `GET /c/:id` — **로그인 불필요**. 챌린지 공개 정보 + `member_count`·`active_this_week`·`sample_members` |
 
 - bcrypt · PyJWT(HS256, 7일). 회원가입 폼은 비밀번호 확인 필드 포함(프론트 검증). `login_id`는 API 응답의 공개 컨텍스트(피드/프로필/댓글)에 절대 안 나감 — `name`만.
+- **P3a 리치 프로필**: `PATCH /auth/me` 에 `link`(URL 정규화·검증) · `location` · `pinned_post_id`(0이하 = 해제, 본인 글만). `GET /u/:handle` 에 `link`·`location`·`post_count`·`challenge_count`·`pinned`(고정 글, `posts`에서 제외)·`trend_series`(public 한정, 스파크라인용).
+- **P3a 차단**: `user_block`(blocker·blocked). 양방향 차단 시 피드·`/search`·`/u/:handle`(→`{blocked_by_me}` 또는 404)·알림에서 상호 숨김. `FEED_SQL` 에 `BLOCK_FILTER` 상시 적용(`{and_where}` 로 리팩터). 차단 시 서로 팔로우 해제. `delete_post` 는 이제 notification·pinned 참조도 정리.
 - `weight_privacy`(`private`/`trend`/`public`): 프로필의 몸무게 노출 + `log` 글의 weight 표시 여부(`public`만).
 - 코드/시각: `parse_dt`는 사용자 벽시계 시각 그대로 저장(naive). `iso_z` 응답.
 - 전역 `@app.exception_handler(Exception)` → `{"detail": ...}` JSON 500.
@@ -58,6 +62,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 `challenge_member` · `challenge_checkin`(check_date 'YYYY-MM-DD' 사용자 로컬) · `notification`(login_id 수신·kind·actor·post_id·read_at).
 알림은 `notify()` 헬퍼가 encourage/comment/follow 시 생성(자기 행동 제외), 응원 취소 시 미읽음 알림 삭제.
 
+`sql/030_phase3a_discovery.sql` (**적용됨** — healthweb 유저로 실행): `app_user` +`link`·`location`·`pinned_post_id` ·
+`user_block`(blocker·blocked, **BLOCK 예약어라 user_block**) · 검색용 함수 인덱스(`lower(body)`·`lower(name)`·`lower(title)`).
+
 `sql/011_migrate_owner_weights.sql` — 오너가 가입 후 `<LOGIN_ID>` 바꿔 실행 (구 텔레그램 이력 → weight_entry).
 
 ## VM 배포 (memo-agent)
@@ -72,10 +79,19 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **배치 ETL** — `refresh-data.yml` · `scripts/` · `data/users/*.json`. Phase 1은 API 직결만(정적 폴백 없음).
 - 이메일 인증, 텔레그램 검증(`verify_code`), `dashboard.js`(→ `app.js`로 흡수).
 
-## 미완 (Phase 3+)
+## Phase 3a (2026-09-09) — 구현·배포됨
 
-그룹 · 검색 · 사진(오브젝트 스토리지) · 리치 프로필 · `/about`·`/c/:slug` 공개 페이지.
-설계: 커뮤니티 IA / Phase 1 상세 설계 아트팩트 (메모리 참조).
+검색 · 리치 프로필(link·location·고정 글·스파크라인) · 차단 · 공개 페이지(`about.html` · `challenge.html?id=` · `/c/:id` API).
+프론트: `SearchView`(상단바 🔍, debounce 350ms) · `Sparkline`(인라인 SVG) · `ProfileView` 확장(차단 메뉴·`blocked_by_me` 상태) ·
+`PostView` 고정 토글 · `SettingsView` link·location. `404.html` 이 `/c/<id>`→`challenge.html`, `/about`→`about.html` 라우팅.
+`challenge.html` 은 로그인 시 앱 `/challenges/:id` 로 리다이렉트, 아니면 `/c/:id` fetch 렌더.
+
+## 미완 (Phase 3b+)
+
+**3b 사진** = OCI Object Storage(버킷+IAM, presigned PUT) · `media` 테이블 · 아바타 · 진행/글 사진 · 신고 큐(`report`) → `sql/040`.
+**3c 그룹** = `group_`·`group_member`(role) · `post.group_id` · `/feed?scope=group:` · 그룹 챌린지 · 알림 kind 확장 → `sql/050`.
+상세·DB/API 델타는 커뮤니티 IA 아트팩트 §05. **착수 전 공유 비밀번호(`!Qazwsx123456`) 로테이션.**
+공개 페이지 SEO 강화(Actions 프리렌더)는 3b 이후.
 
 ## 프론트 P2 추가
 

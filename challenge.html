@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="light dark" />
+  <title>챌린지 · 몸무게 기록</title>
+  <meta name="description" id="meta-desc" content="함께 지키는 데일리 체크인 챌린지" />
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+  <main class="wrap landing">
+    <div id="c-root"><div class="boot">불러오는 중…</div></div>
+    <p class="muted foot"><a href="./" class="link-sm">← 몸무게 기록 홈</a></p>
+  </main>
+
+  <script src="./config.js"></script>
+  <script>
+  (function () {
+    var root = document.getElementById("c-root");
+    var id = new URLSearchParams(location.search).get("id") || "";
+    var base = location.pathname.replace(/\/challenge\.html$/, "");
+    if (!/^\d+$/.test(id)) { root.innerHTML = '<div class="empty">잘못된 주소입니다.</div>'; return; }
+
+    // 이미 로그인한 사용자는 앱 안의 챌린지 화면으로
+    var token = "";
+    try { token = localStorage.getItem(window.HW.TOKEN_KEY) || ""; } catch (e) {}
+    if (token) {
+      try { sessionStorage.setItem("spa_redirect", location.origin + base + "/challenges/" + id); } catch (e) {}
+      location.replace(base + "/app.html");
+      return;
+    }
+
+    var esc = function (s) {
+      var d = document.createElement("div");
+      d.textContent = s == null ? "" : String(s);
+      return d.innerHTML;
+    };
+
+    fetch(window.HW.API + "/c/" + id, { cache: "no-store" })
+      .then(function (r) { if (!r.ok) throw new Error(); return r.json(); })
+      .then(function (c) {
+        document.title = c.title + " · 몸무게 기록";
+        document.getElementById("meta-desc").setAttribute(
+          "content",
+          c.title + " — " + c.member_count + "명이 함께하는 " + c.target_days + "일 데일리 체크인 챌린지"
+        );
+        var more = c.member_count > c.sample_members.length ? " 외" : "";
+        root.innerHTML =
+          '<header class="hero"><h1>' + esc(c.title) + "</h1>" +
+          '<p class="muted">' + esc(c.owner_name) + " 시작 · " + c.target_days + "일 목표</p></header>" +
+          (c.description ? '<p class="c-desc">' + esc(c.description) + "</p>" : "") +
+          '<div class="c-stats">' +
+            "<div><b>" + c.member_count + "</b><span>참여자</span></div>" +
+            "<div><b>" + c.active_this_week + "</b><span>이번 주 활동</span></div>" +
+          "</div>" +
+          (c.sample_members.length
+            ? '<p class="muted sm">' + c.sample_members.map(esc).join(" · ") + more + " 참여 중</p>"
+            : "") +
+          '<a class="cta" href="./">가입하고 참여하기</a>' +
+          '<p class="muted sm c-note">몸무게 기록은 추세를 보기 위한 도구입니다. ' +
+          "챌린지는 매일의 루틴을 함께 지키기 위한 것이고요.</p>";
+      })
+      .catch(function () {
+        root.innerHTML = '<div class="empty">챌린지를 찾을 수 없어요.</div>';
+      });
+  })();
+  </script>
+</body>
+</html>

@@ -106,9 +106,12 @@ function Toast() {
 }
 
 function TopBar({ title, onBack }) {
+  const { route, nav } = useStore();
   return html`<header class="topbar">
     ${onBack && html`<button class="icon-btn" onClick=${onBack} aria-label="뒤로">‹</button>`}
     <span class="topbar-title">${title}</span>
+    ${route !== "/search" &&
+      html`<button class="icon-btn" onClick=${() => nav("/search")} aria-label="검색">🔍</button>`}
   </header>`;
 }
 
@@ -230,6 +233,85 @@ function WeightChart({ entries, target }) {
       </div>
     </div>
     <div class="chart-box"><canvas ref=${canvas}></canvas></div>
+  </div>`;
+}
+
+// ---------- 미니 스파크라인 (프로필 추이) ----------
+function Sparkline({ data }) {
+  const w = 280, h = 46, pad = 3;
+  const lo = Math.min(...data), hi = Math.max(...data);
+  const span = hi - lo || 1;
+  const pts = data
+    .map((v, i) => {
+      const x = pad + (i / (data.length - 1)) * (w - pad * 2);
+      const y = pad + (1 - (v - lo) / span) * (h - pad * 2);
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    })
+    .join(" ");
+  return html`<div class="sparkline">
+    <svg viewBox=${`0 0 ${w} ${h}`} preserveAspectRatio="none" role="img" aria-label="최근 몸무게 추이">
+      <polyline points=${pts} fill="none" stroke="var(--accent)" stroke-width="1.5"
+        vector-effect="non-scaling-stroke" />
+    </svg>
+    <span class="spark-range">${fmtKg(data[0])} → ${fmtKg(data[data.length - 1])} kg</span>
+  </div>`;
+}
+
+// ---------- 뷰: 검색 ----------
+function SearchView() {
+  const { nav } = useStore();
+  const [q, setQ] = useState("");
+  const [res, setRes] = useState(null);
+  const [state, setState] = useState("idle"); // idle | loading | ok | err
+  const timer = useRef(null);
+
+  useEffect(() => {
+    clearTimeout(timer.current);
+    const term = q.trim();
+    if (term.length < 2) { setRes(null); setState("idle"); return; }
+    setState("loading");
+    timer.current = setTimeout(() => {
+      api(`/search?q=${encodeURIComponent(term)}`)
+        .then((d) => { setRes(d); setState("ok"); })
+        .catch(() => setState("err"));
+    }, 350);
+    return () => clearTimeout(timer.current);
+  }, [q]);
+
+  const empty = res && !res.users.length && !res.challenges.length && !res.posts.length;
+  return html`<div class="view search">
+    <input class="search-input" type="search" autofocus placeholder="사람 · 챌린지 · 글 검색"
+      value=${q} onInput=${(e) => setQ(e.target.value)} />
+    ${state === "idle" && html`<div class="empty">두 글자 이상 입력해 보세요.</div>`}
+    ${state === "loading" && html`<${Spinner} />`}
+    ${state === "err" && html`<${ErrorBox} msg="검색에 실패했습니다" />`}
+    ${state === "ok" && empty && html`<div class="empty">"${res.q}" 결과가 없어요.</div>`}
+    ${state === "ok" && !empty && html`
+      ${res.users.length > 0 && html`<section class="sr">
+        <h3>사람</h3>
+        ${res.users.map((u) => html`<button class="sr-user" key=${u.name}
+          onClick=${() => nav(`/u/${encodeURIComponent(u.name)}`)}>
+          <div class="avatar sm">${(u.name || "?")[0].toUpperCase()}</div>
+          <div class="sr-user-txt">
+            <div class="sr-name">${u.name}</div>
+            ${u.bio && html`<div class="sr-bio">${u.bio}</div>`}
+          </div>
+          ${u.i_follow && html`<span class="sr-tag">팔로잉</span>`}
+        </button>`)}
+      </section>`}
+      ${res.challenges.length > 0 && html`<section class="sr">
+        <h3>챌린지</h3>
+        ${res.challenges.map((c) => html`<button class="sr-row" key=${c.id}
+          onClick=${() => nav(`/challenges/${c.id}`)}>
+          <span class="sr-name">${c.title}</span>
+          <span class="sr-meta">${c.member_count}명${c.i_joined ? " · 참여 중" : ""}</span>
+        </button>`)}
+      </section>`}
+      ${res.posts.length > 0 && html`<section class="sr">
+        <h3>글</h3>
+        ${res.posts.map((p) => html`<${PostCard} key=${p.id} post=${p} />`)}
+      </section>`}
+    `}
   </div>`;
 }
 
@@ -367,6 +449,13 @@ function PostView({ id }) {
     try { await api(`/posts/${id}`, { method: "DELETE" }); bump(); nav("/feed"); toast("삭제했습니다"); }
     catch (e) { toast(e.detail, "err"); }
   };
+  const togglePin = async () => {
+    try {
+      await api("/auth/me", { method: "PATCH", body: { pinned_post_id: post.pinned ? 0 : Number(id) } });
+      toast(post.pinned ? "고정을 해제했습니다" : "프로필에 고정했습니다");
+      load();
+    } catch (e) { toast(e.detail, "err"); }
+  };
 
   if (state === "loading") return html`<${Spinner} />`;
   if (state === "gone") return html`<div class="view"><${ErrorBox} msg="삭제되었거나 없는 글입니다" /></div>`;
@@ -377,6 +466,7 @@ function PostView({ id }) {
       <button class="handle" onClick=${() => nav(`/u/${encodeURIComponent(post.name)}`)}>${post.name}</button>
       <${KindBadge} kind=${post.kind} />
       <span class="post-time">${relTime(post.created_at)}</span>
+      ${post.mine && html`<button class="row-del" onClick=${togglePin}>${post.pinned ? "고정 해제" : "고정"}</button>`}
       ${post.mine && html`<button class="row-del" onClick=${delPost} aria-label="삭제">✕</button>`}
     </div>
     <p class="post-body full">${post.body}</p>
@@ -406,13 +496,15 @@ function ProfileView({ handle }) {
   const [following, setFollowing] = useState(false);
   const [followers, setFollowers] = useState(0);
   const [busy, setBusy] = useState(false);
+  const [menu, setMenu] = useState(false);
 
-  useEffect(() => {
+  const load = useCallback(() => {
     setState("loading");
     api(`/u/${encodeURIComponent(handle)}`).then((d) => {
-      setP(d); setFollowing(d.i_follow); setFollowers(d.followers); setState("ok");
+      setP(d); setFollowing(d.i_follow); setFollowers(d.followers || 0); setState("ok");
     }).catch((e) => setState(e.status === 404 ? "gone" : "err"));
   }, [handle]);
+  useEffect(() => { load(); }, [handle, load]);
 
   const toggleFollow = async () => {
     if (busy) return;
@@ -424,12 +516,32 @@ function ProfileView({ handle }) {
       setFollowing(!next); setFollowers((n) => n + (next ? -1 : 1)); toast(e.detail, "err");
     } finally { setBusy(false); }
   };
+  const block = async () => {
+    setMenu(false);
+    if (!confirm(`${p.name} 님을 차단할까요? 서로의 글과 활동이 보이지 않게 됩니다.`)) return;
+    try { await api(`/u/${encodeURIComponent(handle)}/block`, { method: "POST" }); toast("차단했습니다"); load(); }
+    catch (e) { toast(e.detail, "err"); }
+  };
+  const unblock = async () => {
+    try { await api(`/u/${encodeURIComponent(handle)}/block`, { method: "DELETE" }); toast("차단을 해제했습니다"); load(); }
+    catch (e) { toast(e.detail, "err"); }
+  };
 
   if (state === "loading") return html`<${Spinner} />`;
   if (state === "gone") return html`<div class="view"><${ErrorBox} msg="없는 사용자입니다" /></div>`;
-  if (state === "err") return html`<div class="view"><${ErrorBox} msg="불러오지 못했습니다" /></div>`;
+  if (state === "err") return html`<div class="view"><${ErrorBox} msg="불러오지 못했습니다" onRetry=${load} /></div>`;
+
+  if (p.blocked_by_me) return html`<div class="view profile">
+    <div class="empty">
+      <p><b>${p.name}</b> 님을 차단했습니다.</p>
+      <button onClick=${unblock}>차단 해제</button>
+    </div>
+  </div>`;
 
   const trendTxt = { down: "▼ 감소 추세", up: "▲ 증가 추세", flat: "▬ 유지" };
+  const joined = p.created_at
+    ? new Date(p.created_at).toLocaleDateString("ko-KR", { year: "numeric", month: "long" })
+    : null;
   return html`<div class="view profile">
     <div class="profile-head">
       <div class="avatar">${(p.name || "?")[0].toUpperCase()}</div>
@@ -439,17 +551,36 @@ function ProfileView({ handle }) {
       </div>
       ${p.mine
         ? html`<button class="ghost" onClick=${() => nav("/settings")}>편집</button>`
-        : html`<button class=${following ? "ghost" : ""} onClick=${toggleFollow}>${following ? "팔로잉" : "팔로우"}</button>`}
+        : html`<div class="profile-actions">
+            <button class=${following ? "ghost" : ""} onClick=${toggleFollow}>${following ? "팔로잉" : "팔로우"}</button>
+            <button class="icon-btn" onClick=${() => setMenu(!menu)} aria-label="더보기">⋯</button>
+            ${menu && html`<div class="menu-pop"><button onClick=${block}>차단</button></div>`}
+          </div>`}
     </div>
+
+    ${(p.location || p.link || joined) && html`<div class="profile-meta">
+      ${p.location && html`<span>📍 ${p.location}</span>`}
+      ${p.link && html`<a href=${p.link} target="_blank" rel="noopener noreferrer nofollow">🔗 ${p.link.replace(/^https?:\/\//, "")}</a>`}
+      ${joined && html`<span>${joined} 가입</span>`}
+    </div>`}
+
     <div class="profile-stats">
       <span><b>${followers}</b> 팔로워</span>
       <span><b>${p.following}</b> 팔로잉</span>
+      <span><b>${p.post_count}</b> 글</span>
       <span>연속 ${p.streak}일</span>
       ${p.recent_weight != null
         ? html`<span>최근 ${fmtKg(p.recent_weight)}kg</span>`
         : p.trend && html`<span>${trendTxt[p.trend]}</span>`}
     </div>
-    ${p.posts.length === 0
+
+    ${p.trend_series && p.trend_series.length > 1 && html`<${Sparkline} data=${p.trend_series} />`}
+
+    ${p.pinned && html`<div class="pinned-wrap">
+      <span class="pin-label">📌 고정한 글</span>
+      <${PostCard} post=${p.pinned} />
+    </div>`}
+    ${p.posts.length === 0 && !p.pinned
       ? html`<div class="empty">아직 글이 없어요.</div>`
       : p.posts.map((post) => html`<${PostCard} key=${post.id} post=${post} />`)}
   </div>`;
@@ -590,19 +721,20 @@ function NotificationsView() {
 // ---------- 뷰: 설정 ----------
 function SettingsView() {
   const { setMe, toast } = useStore();
-  const [f, setF] = useState({ login_id: "", name: "", bio: "", target_weight: "", weight_privacy: "private" });
+  const [f, setF] = useState({ login_id: "", name: "", bio: "", link: "", location: "", target_weight: "", weight_privacy: "private" });
   const [pw, setPw] = useState({ current_password: "", new_password: "" });
   useEffect(() => {
     api("/auth/me").then((d) => {
       setMe(d);
       setF({ login_id: d.login_id || "", name: d.name || "", bio: d.bio || "",
+        link: d.link || "", location: d.location || "",
         target_weight: d.target_weight ?? "", weight_privacy: d.weight_privacy || "private" });
     }).catch(() => {});
   }, []);
 
   const saveProfile = async () => {
     try {
-      const body = { name: f.name, bio: f.bio, weight_privacy: f.weight_privacy };
+      const body = { name: f.name, bio: f.bio, link: f.link, location: f.location, weight_privacy: f.weight_privacy };
       if (f.target_weight !== "") body.target_weight = parseFloat(f.target_weight);
       await api("/auth/me", { method: "PATCH", body });
       const fresh = await api("/auth/me"); setMe(fresh);
@@ -628,6 +760,10 @@ function SettingsView() {
         <input value=${f.name} onInput=${upd("name")} maxlength="20" /></label>
       <label>소개
         <input value=${f.bio} onInput=${upd("bio")} maxlength="200" placeholder="한 줄 소개" /></label>
+      <label>지역 <span class="hint">선택 · 프로필에 표시됨</span>
+        <input value=${f.location} onInput=${upd("location")} maxlength="60" placeholder="예: 서울" /></label>
+      <label>링크 <span class="hint">선택 · 블로그·SNS 등</span>
+        <input value=${f.link} onInput=${upd("link")} maxlength="200" placeholder="https://" inputmode="url" /></label>
       <label>목표 몸무게 (kg)
         <input type="number" step="0.1" min="20" max="300" value=${f.target_weight} onInput=${upd("target_weight")} /></label>
       <label>몸무게 공개
@@ -819,6 +955,7 @@ function App() {
   else if (cm) { view = html`<${ChallengeView} id=${cm[1]} />`; title = "챌린지"; back = () => nav("/challenges"); }
   else if (route === "/notifications") { view = html`<${NotificationsView} />`; title = "알림"; }
   else if (route === "/me") { view = html`<${MeView} />`; title = "나"; }
+  else if (route === "/search") { view = html`<${SearchView} />`; title = "검색"; back = () => history.back(); }
   else if (route === "/settings") { view = html`<${SettingsView} />`; title = "설정"; back = () => nav("/me"); }
   else if (m) { view = html`<${PostView} id=${m[1]} />`; title = "글"; back = () => history.back(); }
   else if (up) {

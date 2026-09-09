@@ -143,8 +143,8 @@ def current_user(authorization: str = Header(default="")) -> dict:
     except jwt.PyJWTError:
         raise HTTPException(401, "세션이 만료되었습니다. 다시 로그인해 주세요")
     u = q1(
-        "select login_id, name, bio, target_weight, weight_privacy "
-        "from healthweb.app_user where login_id = :lid",
+        "select login_id, name, bio, link, location, pinned_post_id, "
+        "target_weight, weight_privacy from healthweb.app_user where login_id = :lid",
         lid=payload.get("sub"),
     )
     if u is None:
@@ -207,6 +207,43 @@ def notify(recipient: str, kind: str, actor: str, post_id: Optional[int] = None)
 
 
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+URL_RE = re.compile(r"^https?://[^\s]{3,197}$", re.I)
+
+
+def clean_link(raw: Optional[str]) -> Optional[str]:
+    s = (raw or "").strip()
+    if not s:
+        return None
+    if not s.startswith(("http://", "https://")):
+        s = "https://" + s
+    if not URL_RE.match(s):
+        raise HTTPException(400, "링크는 올바른 URL이어야 합니다")
+    return s[:200]
+
+
+def is_blocked(a: str, b: str) -> bool:
+    """a와 b 사이에 어느 방향으로든 차단이 있으면 True."""
+    return q1(
+        "select 1 x from healthweb.user_block "
+        "where (blocker = :a and blocked = :b) or (blocker = :b and blocked = :a)",
+        a=a, b=b,
+    ) is not None
+
+
+def like_arg(q: str) -> str:
+    """LIKE 와일드카드 이스케이프 후 %감쌈%. escape '\\' 와 함께 사용."""
+    q = q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"%{q.lower()}%"
+
+
+# 피드 쿼리에 항상 붙는 차단 필터 (viewer 바인드 필요)
+BLOCK_FILTER = """
+    p.login_id not in (
+        select blocked from healthweb.user_block where blocker = :viewer
+        union all
+        select blocker from healthweb.user_block where blocked = :viewer
+    )
+"""
 
 
 # ---------- 모델 ----------
@@ -232,6 +269,9 @@ class ResetIn(BaseModel):
 class MePatch(BaseModel):
     name: Optional[str] = None
     bio: Optional[str] = None
+    link: Optional[str] = None
+    location: Optional[str] = None
+    pinned_post_id: Optional[int] = None  # 0 또는 음수 → 고정 해제
     target_weight: Optional[float] = None
     weight_privacy: Optional[str] = None
     current_password: Optional[str] = None
@@ -362,6 +402,9 @@ def me(u: dict = Depends(current_user)) -> dict:
         "login_id": u["login_id"],
         "name": u["name"],
         "bio": u["bio"],
+        "link": u["link"],
+        "location": u["location"],
+        "pinned_post_id": u["pinned_post_id"],
         "target_weight": float(u["target_weight"]) if u["target_weight"] is not None else None,
         "weight_privacy": u["weight_privacy"],
     }
@@ -378,6 +421,21 @@ def patch_me(body: MePatch, u: dict = Depends(current_user)) -> dict:
         sets.append("name = :n"); binds["n"] = n
     if body.bio is not None:
         sets.append("bio = :bio"); binds["bio"] = body.bio.strip()[:200] or None
+    if body.link is not None:
+        sets.append("link = :link"); binds["link"] = clean_link(body.link)
+    if body.location is not None:
+        sets.append("location = :loc"); binds["loc"] = body.location.strip()[:60] or None
+    if body.pinned_post_id is not None:
+        if body.pinned_post_id <= 0:
+            sets.append("pinned_post_id = null")
+        else:
+            own = q1(
+                "select 1 x from healthweb.post where id = :i and login_id = :v",
+                i=body.pinned_post_id, v=u["login_id"],
+            )
+            if own is None:
+                raise HTTPException(400, "본인 글만 고정할 수 있습니다")
+            sets.append("pinned_post_id = :pp"); binds["pp"] = body.pinned_post_id
     if body.target_weight is not None:
         if not (MIN_WEIGHT <= body.target_weight <= MAX_WEIGHT):
             raise HTTPException(400, "목표 몸무게가 범위를 벗어났습니다")
@@ -465,6 +523,7 @@ def _post_row(r: dict) -> dict:
         "comment_count": r.get("cmt_count", 0) or 0,
         "i_encouraged": bool(r.get("i_enc")),
         "mine": bool(r.get("mine")),
+        "pinned": bool(r.get("pinned")),
     }
     if r["kind"] == "log" and r.get("weight") is not None and r.get("weight_privacy") == "public":
         out["weight"] = float(r["weight"])
@@ -475,16 +534,18 @@ FEED_SQL = """
     select p.id, au.name, p.kind, p.body, p.created_at,
            we.weight, au.weight_privacy,
            case when p.login_id = :viewer then 1 else 0 end mine,
+           case when au.pinned_post_id = p.id then 1 else 0 end pinned,
            (select count(*) from healthweb.encouragement e where e.post_id = p.id) enc_count,
            (select count(*) from healthweb.post_comment c where c.post_id = p.id) cmt_count,
            (select count(*) from healthweb.encouragement e where e.post_id = p.id and e.login_id = :viewer) i_enc
     from healthweb.post p
     join healthweb.app_user au on au.login_id = p.login_id
     left join healthweb.weight_entry we on we.id = p.weight_entry_id
-    {where}
+    where {block}
+    {and_where}
     order by p.id desc
     fetch first :lim rows only
-"""
+""".replace("{block}", BLOCK_FILTER.strip())
 
 
 @app.get("/feed")
@@ -505,8 +566,8 @@ def feed(
     if cursor:
         conds.append("p.id < :cur")
         binds["cur"] = cursor
-    where = ("where " + " and ".join(conds)) if conds else ""
-    rows = qall(FEED_SQL.format(where=where), **binds)
+    and_where = ("and " + " and ".join(conds)) if conds else ""
+    rows = qall(FEED_SQL.format(and_where=and_where), **binds)
     items = [_post_row(r) for r in rows]
     return {"items": items, "next_cursor": items[-1]["id"] if len(items) == limit else None}
 
@@ -536,7 +597,7 @@ def create_post(body: PostIn, u: dict = Depends(current_user)) -> dict:
 
 @app.get("/posts/{post_id}")
 def get_post(post_id: int, u: dict = Depends(current_user)) -> dict:
-    rows = qall(FEED_SQL.format(where="where p.id = :pid"), viewer=u["login_id"], lim=1, pid=post_id)
+    rows = qall(FEED_SQL.format(and_where="and p.id = :pid"), viewer=u["login_id"], lim=1, pid=post_id)
     if not rows:
         raise HTTPException(404, "글을 찾을 수 없습니다")
     post = _post_row(rows[0])
@@ -609,6 +670,8 @@ def delete_post(post_id: int, u: dict = Depends(current_user)) -> dict:
         raise HTTPException(404, "글을 찾을 수 없습니다")
     dml("delete from healthweb.post_comment where post_id = :p", p=post_id)
     dml("delete from healthweb.encouragement where post_id = :p", p=post_id)
+    dml("delete from healthweb.notification where post_id = :p", p=post_id)
+    dml("update healthweb.app_user set pinned_post_id = null where pinned_post_id = :p", p=post_id)
     dml("delete from healthweb.post where id = :p", p=post_id)
     return {"ok": True}
 
@@ -635,7 +698,8 @@ def _streak(login_id: str) -> int:
 @app.get("/u/{handle}")
 def profile(handle: str, u: dict = Depends(current_user)) -> dict:
     p = q1(
-        "select login_id, name, bio, target_weight, weight_privacy, created_at "
+        "select login_id, name, bio, link, location, pinned_post_id, "
+        "target_weight, weight_privacy, created_at "
         "from healthweb.app_user where lower(name) = lower(:h)",
         h=" ".join(handle.split()),
     )
@@ -643,25 +707,41 @@ def profile(handle: str, u: dict = Depends(current_user)) -> dict:
         raise HTTPException(404, "없는 사용자입니다")
 
     pl = p["login_id"]
+    me = u["login_id"]
+    if pl != me:
+        i_blocked = q1(
+            "select 1 x from healthweb.user_block where blocker = :me and blocked = :v", me=me, v=pl
+        ) is not None
+        if i_blocked:
+            return {"name": p["name"], "blocked_by_me": True}
+        if q1("select 1 x from healthweb.user_block where blocker = :v and blocked = :me", me=me, v=pl):
+            raise HTTPException(404, "없는 사용자입니다")
+
     out = {
         "name": p["name"],
         "bio": p["bio"],
+        "link": p["link"],
+        "location": p["location"],
         "created_at": iso_z(p["created_at"]),
         "weight_privacy": p["weight_privacy"],
         "streak": _streak(pl),
-        "mine": pl == u["login_id"],
+        "mine": pl == me,
+        "post_count": q1("select count(*) c from healthweb.post where login_id = :v", v=pl)["c"],
+        "challenge_count": q1(
+            "select count(*) c from healthweb.challenge_member where login_id = :v", v=pl
+        )["c"],
         "followers": q1("select count(*) c from healthweb.follow where followee = :v", v=pl)["c"],
         "following": q1("select count(*) c from healthweb.follow where follower = :v", v=pl)["c"],
         "i_follow": q1(
             "select 1 x from healthweb.follow where follower = :me and followee = :v",
-            me=u["login_id"], v=pl,
+            me=me, v=pl,
         ) is not None,
     }
     if p["weight_privacy"] in ("trend", "public"):
         recent = qall(
             "select weight, logged_at from healthweb.weight_entry where login_id = :v "
-            "order by logged_at desc fetch first 20 rows only",
-            v=p["login_id"],
+            "order by logged_at desc fetch first 30 rows only",
+            v=pl,
         )
         if recent:
             latest = float(recent[0]["weight"])
@@ -672,14 +752,22 @@ def profile(handle: str, u: dict = Depends(current_user)) -> dict:
             out["trend"] = "down" if diff < -0.1 else "up" if diff > 0.1 else "flat"
             if p["weight_privacy"] == "public":
                 out["recent_weight"] = latest
+                out["trend_series"] = [float(r["weight"]) for r in reversed(recent)]
                 if p["target_weight"] is not None:
                     out["target_weight"] = float(p["target_weight"])
 
+    pinned_id = p["pinned_post_id"]
+    if pinned_id is not None:
+        pin = qall(
+            FEED_SQL.format(and_where="and p.id = :pp"),
+            viewer=me, lim=1, pp=pinned_id,
+        )
+        out["pinned"] = _post_row(pin[0]) if pin else None
     posts = qall(
-        FEED_SQL.format(where="where p.login_id = :pl"),
-        viewer=u["login_id"], lim=30, pl=p["login_id"],
+        FEED_SQL.format(and_where="and p.login_id = :pl"),
+        viewer=me, lim=30, pl=pl,
     )
-    out["posts"] = [_post_row(r) for r in posts]
+    out["posts"] = [_post_row(r) for r in posts if r["id"] != pinned_id]
     return out
 
 
@@ -700,6 +788,8 @@ def follow(handle: str, u: dict = Depends(current_user)) -> dict:
     target = _login_id_by_name(handle)
     if target == u["login_id"]:
         raise HTTPException(400, "자기 자신은 팔로우할 수 없습니다")
+    if is_blocked(u["login_id"], target):
+        raise HTTPException(403, "차단된 사용자입니다")
     try:
         dml(
             "insert into healthweb.follow (follower, followee) values (:me, :t)",
@@ -736,6 +826,88 @@ def follow_list(handle: str, rel: str, u: dict = Depends(current_user)) -> dict:
         me=u["login_id"], lid=lid,
     )
     return {"users": [{"name": r["name"], "i_follow": bool(r["i_follow"])} for r in rows]}
+
+
+@app.post("/u/{handle}/block")
+def block_user(handle: str, u: dict = Depends(current_user)) -> dict:
+    target = _login_id_by_name(handle)
+    if target == u["login_id"]:
+        raise HTTPException(400, "자기 자신은 차단할 수 없습니다")
+    try:
+        dml(
+            "insert into healthweb.user_block (blocker, blocked) values (:me, :t)",
+            me=u["login_id"], t=target,
+        )
+    except oracledb.IntegrityError:
+        pass
+    # 차단하면 서로 팔로우 해제
+    dml(
+        "delete from healthweb.follow where (follower = :me and followee = :t) "
+        "or (follower = :t and followee = :me)",
+        me=u["login_id"], t=target,
+    )
+    return {"ok": True}
+
+
+@app.delete("/u/{handle}/block")
+def unblock_user(handle: str, u: dict = Depends(current_user)) -> dict:
+    target = _login_id_by_name(handle)
+    dml(
+        "delete from healthweb.user_block where blocker = :me and blocked = :t",
+        me=u["login_id"], t=target,
+    )
+    return {"ok": True}
+
+
+# ---------- 검색 ----------
+
+@app.get("/search")
+def search(q: str, request: Request, u: dict = Depends(current_user)) -> dict:
+    term = q.strip()
+    if len(term) < 2:
+        raise HTTPException(400, "두 글자 이상 입력하세요")
+    if not rate_ok(f"search:{ip(request)}", 30, 60):
+        raise HTTPException(429, "검색이 많습니다. 잠시 후 다시 시도해 주세요")
+    me = u["login_id"]
+    arg = like_arg(term)
+
+    users = qall(
+        "select au.name, au.bio, "
+        "case when exists (select 1 from healthweb.follow f "
+        "  where f.follower = :me and f.followee = au.login_id) then 1 else 0 end i_follow "
+        "from healthweb.app_user au "
+        "where lower(au.name) like :arg escape '\\' "
+        "and au.login_id not in ("
+        "  select blocked from healthweb.user_block where blocker = :me "
+        "  union all select blocker from healthweb.user_block where blocked = :me) "
+        "order by au.name fetch first 12 rows only",
+        me=me, arg=arg,
+    )
+    challenges = qall(
+        "select c.id, c.title, "
+        "(select count(*) from healthweb.challenge_member m where m.challenge_id = c.id) member_count, "
+        "case when exists (select 1 from healthweb.challenge_member m "
+        "  where m.challenge_id = c.id and m.login_id = :me) then 1 else 0 end i_joined "
+        "from healthweb.challenge c where lower(c.title) like :arg escape '\\' "
+        "order by c.id desc fetch first 12 rows only",
+        me=me, arg=arg,
+    )
+    posts = qall(
+        FEED_SQL.format(and_where="and lower(p.body) like :arg escape '\\'"),
+        viewer=me, lim=12, arg=arg,
+    )
+    return {
+        "q": term,
+        "users": [
+            {"name": r["name"], "bio": r["bio"], "i_follow": bool(r["i_follow"])} for r in users
+        ],
+        "challenges": [
+            {"id": r["id"], "title": r["title"], "member_count": r["member_count"],
+             "i_joined": bool(r["i_joined"])}
+            for r in challenges
+        ],
+        "posts": [_post_row(r) for r in posts],
+    }
 
 
 # ---------- 챌린지 (데일리 체크인) ----------
@@ -884,6 +1056,44 @@ def uncheckin(cid: int, date: str, u: dict = Depends(current_user)) -> dict:
     return _challenge_progress(cid, u["login_id"])
 
 
+# ---------- 공개 챌린지 페이지 (로그인 불필요) ----------
+
+@app.get("/c/{cid}")
+def public_challenge(cid: int, request: Request) -> dict:
+    if not rate_ok(f"pubc:{ip(request)}", 60, 60):
+        raise HTTPException(429, "요청이 많습니다")
+    c = q1(
+        "select c.id, c.title, c.description, c.target_days, au.name owner_name, c.created_at "
+        "from healthweb.challenge c join healthweb.app_user au on au.login_id = c.owner "
+        "where c.id = :c",
+        c=cid,
+    )
+    if c is None:
+        raise HTTPException(404, "챌린지를 찾을 수 없습니다")
+    member_count = q1(
+        "select count(*) n from healthweb.challenge_member where challenge_id = :c", c=cid
+    )["n"]
+    week_ago = (dt.date.today() - dt.timedelta(days=7)).strftime("%Y-%m-%d")
+    active = q1(
+        "select count(distinct login_id) n from healthweb.challenge_checkin "
+        "where challenge_id = :c and check_date >= :d",
+        c=cid, d=week_ago,
+    )["n"]
+    members = qall(
+        "select au.name from healthweb.challenge_member m "
+        "join healthweb.app_user au on au.login_id = m.login_id "
+        "where m.challenge_id = :c order by m.joined_at fetch first 8 rows only",
+        c=cid,
+    )
+    return {
+        "id": c["id"], "title": c["title"], "description": c["description"],
+        "target_days": c["target_days"], "owner_name": c["owner_name"],
+        "created_at": iso_z(c["created_at"]),
+        "member_count": member_count, "active_this_week": active,
+        "sample_members": [m["name"] for m in members],
+    }
+
+
 # ---------- 알림 ----------
 
 @app.get("/notifications")
@@ -896,7 +1106,11 @@ def notifications(u: dict = Depends(current_user), cursor: Optional[int] = None,
     rows = qall(
         "select n.id, n.kind, n.post_id, n.read_at, n.created_at, au.name actor_name "
         "from healthweb.notification n join healthweb.app_user au on au.login_id = n.actor "
-        "where n.login_id = :me " + where + " order by n.id desc fetch first :lim rows only",
+        "where n.login_id = :me " + where + " "
+        "and n.actor not in ("
+        "  select blocked from healthweb.user_block where blocker = :me "
+        "  union all select blocker from healthweb.user_block where blocked = :me) "
+        "order by n.id desc fetch first :lim rows only",
         **binds,
     )
     items = [
