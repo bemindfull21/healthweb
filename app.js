@@ -1017,7 +1017,9 @@ function WeightModal({ onClose }) {
   const [share, setShare] = useState(false);
   const [photo, setPhoto] = useState(null);
   const [busy, setBusy] = useState(false);
+  const willShare = share || !!photo;
 
+  const onPhoto = (m) => { setPhoto(m); if (m) setShare(true); };
   const submit = async (e) => {
     e.preventDefault();
     const weight = parseFloat(w);
@@ -1026,7 +1028,7 @@ function WeightModal({ onClose }) {
     try {
       await api("/weights", {
         method: "POST",
-        body: { weight, logged_at: at, note, share, photo_media_id: share && photo ? photo.id : null },
+        body: { weight, logged_at: at, note, share: willShare, photo_media_id: photo ? photo.id : null },
       });
       bump(); toast("기록했습니다"); onClose();
     } catch (err) { toast(err.detail, "err"); setBusy(false); }
@@ -1039,8 +1041,13 @@ function WeightModal({ onClose }) {
         <input type="number" inputmode="decimal" step="0.1" value=${w} onInput=${(e) => setW(e.target.value)} autofocus required /></label>
       <label>메모 (선택)
         <input value=${note} onInput=${(e) => setNote(e.target.value)} maxlength="500" placeholder="컨디션, 상황…" /></label>
-      <label class="check"><input type="checkbox" checked=${share} onChange=${(e) => setShare(e.target.checked)} /> 이 기록을 글로 공유</label>
-      ${share && html`<${ImageUpload} kind="progress" value=${photo} onChange=${setPhoto} label="진행 사진" />`}
+      <div class="field">
+        <span class="field-label">진행 사진 (선택) <span class="hint">첨부하면 피드에 함께 공유돼요</span></span>
+        <${ImageUpload} kind="progress" value=${photo} onChange=${onPhoto} label="사진 추가" />
+      </div>
+      <label class="check"><input type="checkbox" checked=${willShare} disabled=${!!photo}
+        onChange=${(e) => setShare(e.target.checked)} />
+        ${photo ? "사진과 함께 피드에 공유" : "이 기록을 글로 공유"}</label>
       <button disabled=${busy}>저장</button>
     </form>
   <//>`;
@@ -1070,7 +1077,7 @@ function PostModal({ onClose }) {
         ${Object.entries(KIND_LABEL).map(([k, l]) => html`<button type="button" key=${k}
           class=${"chip" + (k === kind ? " on" : "")} onClick=${() => setKind(k)}>${l}</button>`)}
       </div>
-      <textarea rows="6" value=${body} onInput=${(e) => setBody(e.target.value)} maxlength="2000"
+      <textarea rows="4" value=${body} onInput=${(e) => setBody(e.target.value)} maxlength="2000"
         placeholder="오늘 지킨 루틴, 느낀 점, 궁금한 것…" autofocus></textarea>
       <${ImageUpload} kind="post" value=${image} onChange=${setImage} label="사진 추가" />
       <button disabled=${!body.trim() || busy}>게시</button>
