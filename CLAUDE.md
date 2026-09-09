@@ -9,7 +9,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 체중 관리로 건강한 삶을 만드는 사람들의 커뮤니티. 몸무게 기록 + 피드/응원.
 정적 프론트(GitHub Pages `bemindfull21/healthweb`, public) + VM FastAPI.
 
-## Phase 1 (2026-09-09~) — 현재
+## Phase 1·2 (2026-09-09) — 현재
 
 "기록 → 공유 → 응원" 한 루프. 인증은 아이디/비밀번호, 몸무게는 웹앱 입력만(**텔레그램 봇 입력 폐기**).
 
@@ -36,7 +36,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 |---|---|
 | 인증 | `GET /auth/check?login_id=&name=` (둘 다 중복확인) · `POST /auth/signup` (login_id·name·password·target_weight) · `/auth/signin` · `/auth/reset` (login_id + **name 일치**) · `GET/PATCH /auth/me` |
 | 몸무게 | `GET/POST /weights` · `DELETE /weights/:id` (연결 글은 링크만 끊음) |
-| 커뮤니티 | `GET /feed?cursor=` · `POST /posts` · `GET /posts/:id` · `POST/DELETE /posts/:id/encourage` · `POST /posts/:id/comments` · `DELETE /posts/:id` · `GET /u/:handle` |
+| 커뮤니티 | `GET /feed?scope=following|all&cursor=` · `POST /posts` · `GET /posts/:id` · `POST/DELETE /posts/:id/encourage` · `POST /posts/:id/comments` · `DELETE /posts/:id` · `GET /u/:handle` |
+| 팔로우 (P2) | `POST/DELETE /u/:handle/follow` · `GET /u/:handle/{followers|following}` |
+| 챌린지 (P2) | `GET/POST /challenges` · `GET /challenges/:id` · `POST /challenges/:id/join` · `DELETE .../leave` · `POST .../checkin` (`{date}`) · `DELETE .../checkin/:date` |
+| 알림 (P2) | `GET /notifications?cursor=` · `GET /notifications/unread-count` · `POST /notifications/read` |
 
 - bcrypt · PyJWT(HS256, 7일). 회원가입 폼은 비밀번호 확인 필드 포함(프론트 검증). `login_id`는 API 응답의 공개 컨텍스트(피드/프로필/댓글)에 절대 안 나감 — `name`만.
 - `weight_privacy`(`private`/`trend`/`public`): 프로필의 몸무게 노출 + `log` 글의 weight 표시 여부(`public`만).
@@ -50,6 +53,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 `weight_entry`(login_id · logged_at · weight · note) ·
 `post`(login_id · kind · body · weight_entry_id) · `encouragement`(PK post_id+login_id) · `post_comment`.
 `verify_code` · 구 `app_user`(email/tg, username/user_name) drop됨.
+
+`sql/020_phase2_schema.sql` (**적용됨**): `follow`(follower·followee) · `challenge`(owner·title·target_days) ·
+`challenge_member` · `challenge_checkin`(check_date 'YYYY-MM-DD' 사용자 로컬) · `notification`(login_id 수신·kind·actor·post_id·read_at).
+알림은 `notify()` 헬퍼가 encourage/comment/follow 시 생성(자기 행동 제외), 응원 취소 시 미읽음 알림 삭제.
 
 `sql/011_migrate_owner_weights.sql` — 오너가 가입 후 `<LOGIN_ID>` 바꿔 실행 (구 텔레그램 이력 → weight_entry).
 
@@ -65,7 +72,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **배치 ETL** — `refresh-data.yml` · `scripts/` · `data/users/*.json`. Phase 1은 API 직결만(정적 폴백 없음).
 - 이메일 인증, 텔레그램 검증(`verify_code`), `dashboard.js`(→ `app.js`로 흡수).
 
-## 미완 (Phase 2+)
+## 미완 (Phase 3+)
 
-챌린지 · 팔로우 · 알림 탭 · 그룹 · 검색 · 사진(오브젝트 스토리지) · 리치 프로필.
+그룹 · 검색 · 사진(오브젝트 스토리지) · 리치 프로필 · `/about`·`/c/:slug` 공개 페이지.
 설계: 커뮤니티 IA / Phase 1 상세 설계 아트팩트 (메모리 참조).
+
+## 프론트 P2 추가
+
+탭바 5개(피드·챌린지·＋·알림·나, 알림 미읽음 뱃지). 피드 [팔로잉|전체] 세그(localStorage 저장).
+`ChallengesView`/`ChallengeView`(데일리 체크인, 진행바)/`NotificationsView`(진입 시 read 처리).
+`ChallengeModal`(＋ 시트에서). 프로필에 팔로우 버튼 + 팔로워/팔로잉 수.

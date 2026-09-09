@@ -113,12 +113,19 @@ function TopBar({ title, onBack }) {
 }
 
 function TabBar() {
-  const { route, nav, openSheet, bump } = useStore();
-  const is = (r) => route === r || (r === "/feed" && route.startsWith("/p"));
+  const { route, nav, openSheet, bump, unread } = useStore();
+  const on = (r) =>
+    route === r ||
+    (r === "/feed" && route.startsWith("/p/")) ||
+    (r === "/challenges" && route.startsWith("/challenges"));
   const go = (r) => () => (route === r ? bump() : nav(r)); // 현재 탭 다시 누르면 새로고침
-  return html`<nav class="tabbar">
-    <button class=${is("/feed") ? "on" : ""} onClick=${go("/feed")}>피드</button>
+  return html`<nav class="tabbar tabbar-5">
+    <button class=${on("/feed") ? "on" : ""} onClick=${go("/feed")}>피드</button>
+    <button class=${on("/challenges") ? "on" : ""} onClick=${go("/challenges")}>챌린지</button>
     <button class="plus" onClick=${openSheet} aria-label="추가">＋</button>
+    <button class=${route === "/notifications" ? "on" : ""} onClick=${go("/notifications")}>
+      알림${unread > 0 && html`<span class="badge">${unread > 9 ? "9+" : unread}</span>`}
+    </button>
     <button class=${route === "/me" ? "on" : ""} onClick=${go("/me")}>나</button>
   </nav>`;
 }
@@ -228,28 +235,44 @@ function WeightChart({ entries, target }) {
 // ---------- 뷰: 피드 ----------
 function FeedView() {
   const { bumpKey, openPost } = useStore();
+  const [scope, setScope] = useState(() => {
+    try { return localStorage.getItem("healthweb.feedScope") || "following"; } catch { return "following"; }
+  });
   const [items, setItems] = useState([]);
   const [cursor, setCursor] = useState(undefined);
   const [state, setState] = useState("loading");
 
   const load = useCallback(async (cur) => {
     try {
-      const d = await api(`/feed${cur ? "?cursor=" + cur : ""}`);
+      const d = await api(`/feed?scope=${scope}${cur ? "&cursor=" + cur : ""}`);
       setItems((prev) => (cur ? [...prev, ...d.items] : d.items));
       setCursor(d.next_cursor);
       setState("ok");
     } catch (e) { setState(e.status === 0 ? "neterr" : "err"); }
-  }, []);
+  }, [scope]);
 
   useEffect(() => { setState("loading"); load(); }, [bumpKey, load]);
 
-  if (state === "loading") return html`<${Spinner} />`;
-  if (state !== "ok") return html`<${ErrorBox} msg=${state === "neterr" ? "서버에 연결하지 못했습니다" : "피드를 불러오지 못했습니다"} onRetry=${() => { setState("loading"); load(); }} />`;
+  const pick = (s) => {
+    setScope(s);
+    try { localStorage.setItem("healthweb.feedScope", s); } catch {}
+  };
+
+  const tabs = html`<div class="seg">
+    <button class=${scope === "following" ? "on" : ""} onClick=${() => pick("following")}>팔로잉</button>
+    <button class=${scope === "all" ? "on" : ""} onClick=${() => pick("all")}>전체</button>
+  </div>`;
+
+  if (state === "loading") return html`<div class="view feed">${tabs}<${Spinner} /></div>`;
+  if (state !== "ok") return html`<div class="view feed">${tabs}<${ErrorBox} msg=${state === "neterr" ? "서버에 연결하지 못했습니다" : "피드를 불러오지 못했습니다"} onRetry=${() => { setState("loading"); load(); }} /></div>`;
 
   return html`<div class="view feed">
-    ${openPost && html`<button class="write-btn" onClick=${openPost}>＋ 글쓰기</button>`}
+    ${tabs}
+    <button class="write-btn" onClick=${openPost}>＋ 글쓰기</button>
     ${items.length === 0
-      ? html`<div class="empty">아직 글이 없어요. 첫 기록을 남겨보세요.</div>`
+      ? html`<div class="empty">${scope === "following"
+          ? "팔로우한 사람의 글이 없어요. 전체 탭에서 사람을 찾아보세요."
+          : "아직 글이 없어요. 첫 기록을 남겨보세요."}</div>`
       : items.map((p) => html`<${PostCard} key=${p.id} post=${p} />`)}
     ${cursor && html`<button class="more" onClick=${() => load(cursor)}>더 보기</button>`}
   </div>`;
@@ -376,14 +399,30 @@ function PostView({ id }) {
 
 // ---------- 뷰: 프로필 ----------
 function ProfileView({ handle }) {
-  const { nav } = useStore();
+  const { nav, toast } = useStore();
   const [p, setP] = useState(null);
   const [state, setState] = useState("loading");
+  const [following, setFollowing] = useState(false);
+  const [followers, setFollowers] = useState(0);
+  const [busy, setBusy] = useState(false);
+
   useEffect(() => {
     setState("loading");
-    api(`/u/${encodeURIComponent(handle)}`).then((d) => { setP(d); setState("ok"); })
-      .catch((e) => setState(e.status === 404 ? "gone" : "err"));
+    api(`/u/${encodeURIComponent(handle)}`).then((d) => {
+      setP(d); setFollowing(d.i_follow); setFollowers(d.followers); setState("ok");
+    }).catch((e) => setState(e.status === 404 ? "gone" : "err"));
   }, [handle]);
+
+  const toggleFollow = async () => {
+    if (busy) return;
+    const next = !following;
+    setFollowing(next); setFollowers((n) => n + (next ? 1 : -1)); setBusy(true);
+    try {
+      await api(`/u/${encodeURIComponent(handle)}/follow`, { method: next ? "POST" : "DELETE" });
+    } catch (e) {
+      setFollowing(!next); setFollowers((n) => n + (next ? -1 : 1)); toast(e.detail, "err");
+    } finally { setBusy(false); }
+  };
 
   if (state === "loading") return html`<${Spinner} />`;
   if (state === "gone") return html`<div class="view"><${ErrorBox} msg="없는 사용자입니다" /></div>`;
@@ -393,22 +432,157 @@ function ProfileView({ handle }) {
   return html`<div class="view profile">
     <div class="profile-head">
       <div class="avatar">${(p.name || "?")[0].toUpperCase()}</div>
-      <div>
+      <div class="profile-id">
         <div class="phandle">${p.name}</div>
         ${p.bio && html`<p class="pbio">${p.bio}</p>`}
       </div>
+      ${p.mine
+        ? html`<button class="ghost" onClick=${() => nav("/settings")}>편집</button>`
+        : html`<button class=${following ? "ghost" : ""} onClick=${toggleFollow}>${following ? "팔로잉" : "팔로우"}</button>`}
     </div>
     <div class="profile-stats">
+      <span><b>${followers}</b> 팔로워</span>
+      <span><b>${p.following}</b> 팔로잉</span>
       <span>연속 ${p.streak}일</span>
-      <span>가입 ${relTime(p.created_at)}</span>
       ${p.recent_weight != null
         ? html`<span>최근 ${fmtKg(p.recent_weight)}kg</span>`
         : p.trend && html`<span>${trendTxt[p.trend]}</span>`}
     </div>
-    ${p.mine && html`<button class="write-btn" onClick=${() => nav("/settings")}>프로필 편집</button>`}
     ${p.posts.length === 0
-      ? html`<div class="empty">아직 공개 글이 없어요.</div>`
+      ? html`<div class="empty">아직 글이 없어요.</div>`
       : p.posts.map((post) => html`<${PostCard} key=${post.id} post=${post} />`)}
+  </div>`;
+}
+
+// ---------- 뷰: 챌린지 목록 ----------
+function ChallengesView() {
+  const { bumpKey, nav, openChallenge } = useStore();
+  const [items, setItems] = useState(null);
+  const [state, setState] = useState("loading");
+  useEffect(() => {
+    setState("loading");
+    api("/challenges").then((d) => { setItems(d.items); setState("ok"); })
+      .catch(() => setState("err"));
+  }, [bumpKey]);
+
+  if (state === "loading") return html`<${Spinner} />`;
+  if (state === "err") return html`<${ErrorBox} msg="챌린지를 불러오지 못했습니다" />`;
+
+  return html`<div class="view challenges">
+    <button class="write-btn" onClick=${openChallenge}>＋ 챌린지 만들기</button>
+    ${items.length === 0
+      ? html`<div class="empty">첫 챌린지를 만들어 보세요. 연속으로 지킬 루틴을요.</div>`
+      : items.map((c) => html`
+        <article class="challenge-card" key=${c.id} onClick=${() => nav(`/challenges/${c.id}`)}>
+          <div class="cc-title">${c.title}</div>
+          <div class="cc-meta">
+            <span>${c.target_days}일 목표</span>
+            <span>·</span>
+            <span>${c.member_count}명 참여</span>
+            ${c.i_joined && html`<span class="cc-badge">내 진행 ${c.progress}/${c.target_days}</span>`}
+          </div>
+        </article>`)}
+  </div>`;
+}
+
+// ---------- 뷰: 챌린지 상세 ----------
+function ChallengeView({ id }) {
+  const { bump, toast, nav } = useStore();
+  const [c, setC] = useState(null);
+  const [state, setState] = useState("loading");
+  const [busy, setBusy] = useState(false);
+  const today = new Date();
+  today.setMinutes(today.getMinutes() - today.getTimezoneOffset());
+  const todayStr = today.toISOString().slice(0, 10);
+
+  const load = useCallback(async () => {
+    try { setC(await api(`/challenges/${id}`)); setState("ok"); }
+    catch (e) { setState(e.status === 404 ? "gone" : "err"); }
+  }, [id]);
+  useEffect(() => { setState("loading"); load(); }, [id, load]);
+
+  const join = async () => {
+    setBusy(true);
+    try { await api(`/challenges/${id}/join`, { method: "POST" }); await load(); bump(); }
+    catch (e) { toast(e.detail, "err"); }
+    finally { setBusy(false); }
+  };
+  const leave = async () => {
+    if (!confirm("챌린지에서 나갈까요? 체크 기록이 사라집니다.")) return;
+    try { await api(`/challenges/${id}/leave`, { method: "DELETE" }); bump(); nav("/challenges"); }
+    catch (e) { toast(e.detail, "err"); }
+  };
+  const check = async () => {
+    const done = c.my_dates && c.my_dates.includes(todayStr);
+    setBusy(true);
+    try {
+      if (done) await api(`/challenges/${id}/checkin/${todayStr}`, { method: "DELETE" });
+      else await api(`/challenges/${id}/checkin`, { method: "POST", body: { date: todayStr } });
+      await load(); bump();
+    } catch (e) { toast(e.detail, "err"); }
+    finally { setBusy(false); }
+  };
+
+  if (state === "loading") return html`<${Spinner} />`;
+  if (state === "gone") return html`<div class="view"><${ErrorBox} msg="없는 챌린지입니다" /></div>`;
+  if (state === "err") return html`<div class="view"><${ErrorBox} msg="불러오지 못했습니다" onRetry=${load} /></div>`;
+
+  const checkedToday = c.my_dates && c.my_dates.includes(todayStr);
+  const pct = Math.min(100, Math.round((c.my_progress / c.target_days) * 100));
+  return html`<div class="view challenge-detail">
+    <h2>${c.title}</h2>
+    <p class="muted sm">${c.owner_name} 시작 · ${c.target_days}일 목표</p>
+    ${c.description && html`<p class="cd-desc">${c.description}</p>`}
+
+    ${c.i_joined
+      ? html`
+        <div class="cd-progress">
+          <div class="pbar"><div class="pfill" style=${`width:${pct}%`}></div></div>
+          <div class="pnum">${c.my_progress} / ${c.target_days}일 · 연속 ${c.my_streak}일</div>
+        </div>
+        <button class=${"check-btn" + (checkedToday ? " done" : "")} disabled=${busy} onClick=${check}>
+          ${checkedToday ? "오늘 완료 ✓" : "오늘 체크하기"}
+        </button>
+        <button class="ghost leave-btn" onClick=${leave}>챌린지 나가기</button>`
+      : html`<button disabled=${busy} onClick=${join}>참여하기</button>`}
+
+    <div class="panel">
+      <div class="panel-head"><span>참여자 ${c.members.length}명</span></div>
+      ${c.members.map((m) => html`<div class="member-row" key=${m.name}>
+        <button class="handle" onClick=${() => nav(`/u/${encodeURIComponent(m.name)}`)}>${m.name}</button>
+        <div class="mini-bar"><div class="mini-fill" style=${`width:${Math.min(100, Math.round((m.progress / c.target_days) * 100))}%`}></div></div>
+        <span class="mnum">${m.progress}일</span>
+      </div>`)}
+    </div>
+  </div>`;
+}
+
+// ---------- 뷰: 알림 ----------
+function NotificationsView() {
+  const { bumpKey, nav, clearUnread } = useStore();
+  const [items, setItems] = useState(null);
+  const [state, setState] = useState("loading");
+
+  useEffect(() => {
+    setState("loading");
+    api("/notifications").then((d) => {
+      setItems(d.items); setState("ok");
+      api("/notifications/read", { method: "POST" }).then(clearUnread).catch(() => {});
+    }).catch(() => setState("err"));
+  }, [bumpKey]);
+
+  if (state === "loading") return html`<${Spinner} />`;
+  if (state === "err") return html`<${ErrorBox} msg="알림을 불러오지 못했습니다" />`;
+  if (items.length === 0) return html`<div class="empty">아직 알림이 없어요.</div>`;
+
+  const verb = { encourage: "님이 응원했어요", comment: "님이 댓글을 남겼어요", follow: "님이 팔로우했어요" };
+  return html`<div class="view notifications">
+    ${items.map((n) => html`
+      <button class=${"notif" + (n.read ? "" : " unread")} key=${n.id}
+        onClick=${() => n.post_id ? nav(`/p/${n.post_id}`) : nav(`/u/${encodeURIComponent(n.actor_name)}`)}>
+        <span><b>${n.actor_name}</b>${verb[n.kind] || ""}</span>
+        <span class="notif-time">${relTime(n.created_at)}</span>
+      </button>`)}
   </div>`;
 }
 
@@ -547,11 +721,47 @@ function PostModal({ onClose }) {
   <//>`;
 }
 
-function ActionSheet({ onClose, onWeight, onPost }) {
+function ChallengeModal({ onClose }) {
+  const { bump, toast, nav } = useStore();
+  const [title, setTitle] = useState("");
+  const [desc, setDesc] = useState("");
+  const [days, setDays] = useState("21");
+  const [busy, setBusy] = useState(false);
+  const submit = async (e) => {
+    e.preventDefault();
+    const n = parseInt(days, 10);
+    if (title.trim().length < 2) return toast("제목을 입력하세요", "err");
+    if (!(n >= 1 && n <= 365)) return toast("목표 일수는 1–365", "err");
+    setBusy(true);
+    try {
+      const { id } = await api("/challenges", {
+        method: "POST",
+        body: { title: title.trim(), description: desc.trim() || null, target_days: n },
+      });
+      bump(); toast("챌린지를 만들었어요"); onClose(); nav(`/challenges/${id}`);
+    } catch (err) { toast(err.detail, "err"); setBusy(false); }
+  };
+  return html`<${Modal} title="챌린지 만들기" onClose=${onClose}>
+    <form class="modal-form" onSubmit=${submit}>
+      <label>제목 <span class="hint">예: 매일 기록 21일</span>
+        <input value=${title} onInput=${(e) => setTitle(e.target.value)} maxlength="60" autofocus required /></label>
+      <label>설명 (선택)
+        <textarea rows="3" value=${desc} onInput=${(e) => setDesc(e.target.value)} maxlength="500"
+          placeholder="어떤 루틴을 매일 지킬까요?"></textarea></label>
+      <label>목표 일수
+        <input type="number" inputmode="numeric" min="1" max="365" value=${days}
+          onInput=${(e) => setDays(e.target.value)} /></label>
+      <button disabled=${busy}>만들기</button>
+    </form>
+  <//>`;
+}
+
+function ActionSheet({ onClose, pick }) {
   return html`<div class="modal-back" onClick=${onClose}>
     <div class="sheet" onClick=${(e) => e.stopPropagation()}>
-      <button onClick=${onWeight}>몸무게 기록</button>
-      <button onClick=${onPost}>글쓰기</button>
+      <button onClick=${() => pick("weight")}>몸무게 기록</button>
+      <button onClick=${() => pick("post")}>글쓰기</button>
+      <button onClick=${() => pick("challenge")}>챌린지 만들기</button>
       <button class="cancel" onClick=${onClose}>취소</button>
     </div>
   </div>`;
@@ -562,8 +772,9 @@ function App() {
   const { route, nav } = useRoute();
   const [me, setMe] = useState(() => { try { return JSON.parse(localStorage.getItem(ME_KEY) || "null"); } catch { return null; } });
   const [toastState, setToastState] = useState(null);
-  const [modal, setModal] = useState(null); // 'weight' | 'post' | 'sheet' | null
+  const [modal, setModal] = useState(null); // 'weight' | 'post' | 'challenge' | 'sheet' | null
   const [bumpKey, setBumpKey] = useState(0);
+  const [unread, setUnread] = useState(0);
   const toastTimer = useRef(null);
 
   useEffect(() => {
@@ -572,6 +783,13 @@ function App() {
       try { localStorage.setItem(ME_KEY, JSON.stringify(d)); } catch {}
     }).catch(() => {});
   }, []);
+
+  useEffect(() => {
+    const refresh = () => api("/notifications/unread-count").then((d) => setUnread(d.count)).catch(() => {});
+    refresh();
+    const t = setInterval(refresh, 60000);
+    return () => clearInterval(t);
+  }, [bumpKey]);
 
   const toast = useCallback((text, kind) => {
     setToastState({ text, kind });
@@ -582,36 +800,43 @@ function App() {
 
   const store = {
     me, setMe: (d) => { setMe(d); try { localStorage.setItem(ME_KEY, JSON.stringify(d)); } catch {} },
-    route, nav, toast, bump, bumpKey,
+    route, nav, toast, bump, bumpKey, unread,
     toastData: toastState,
+    clearUnread: () => setUnread(0),
     openSheet: () => setModal("sheet"),
     openWeight: () => setModal("weight"),
     openPost: () => setModal("post"),
+    openChallenge: () => setModal("challenge"),
   };
 
   const m = route.match(/^\/p\/(\d+)$/);
+  const cm = route.match(/^\/challenges\/(\d+)$/);
   const up = route.match(/^\/u\/(.+)$/);
   let view, title = "몸무게 기록", back = null;
   if (route === "/feed") { view = html`<${FeedView} />`; title = "피드"; }
+  else if (route === "/challenges") { view = html`<${ChallengesView} />`; title = "챌린지"; }
+  else if (cm) { view = html`<${ChallengeView} id=${cm[1]} />`; title = "챌린지"; back = () => nav("/challenges"); }
+  else if (route === "/notifications") { view = html`<${NotificationsView} />`; title = "알림"; }
   else if (route === "/me") { view = html`<${MeView} />`; title = "나"; }
   else if (route === "/settings") { view = html`<${SettingsView} />`; title = "설정"; back = () => nav("/me"); }
-  else if (m) { view = html`<${PostView} id=${m[1]} />`; title = "글"; back = () => nav("/feed"); }
+  else if (m) { view = html`<${PostView} id=${m[1]} />`; title = "글"; back = () => history.back(); }
   else if (up) {
     const handle = decodeURIComponent(up[1]);
     view = html`<${ProfileView} handle=${handle} />`; title = handle; back = () => history.back();
   }
   else { view = html`<${FeedView} />`; title = "피드"; }
 
+  const close = () => setModal(null);
   return html`<${Store.Provider} value=${store}>
     <div class="app-shell">
       <${TopBar} title=${title} onBack=${back} />
       <main class="app-main">${view}</main>
       <${TabBar} />
       <${Toast} />
-      ${modal === "sheet" && html`<${ActionSheet} onClose=${() => setModal(null)}
-        onWeight=${() => setModal("weight")} onPost=${() => setModal("post")} />`}
-      ${modal === "weight" && html`<${WeightModal} onClose=${() => setModal(null)} />`}
-      ${modal === "post" && html`<${PostModal} onClose=${() => setModal(null)} />`}
+      ${modal === "sheet" && html`<${ActionSheet} onClose=${close} pick=${setModal} />`}
+      ${modal === "weight" && html`<${WeightModal} onClose=${close} />`}
+      ${modal === "post" && html`<${PostModal} onClose=${close} />`}
+      ${modal === "challenge" && html`<${ChallengeModal} onClose=${close} />`}
     </div>
   </${Store.Provider}>`;
 }

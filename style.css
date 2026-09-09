@@ -252,3 +252,60 @@ td.q { white-space: normal; color: var(--muted); font-size: .84rem; min-width: 1
   .toast { animation: rise .2s ease-out; }
   @keyframes rise { from { opacity: 0; transform: translate(-50%, 8px); } }
 }
+
+/* ============ Phase 2: 탭·피드·챌린지·알림 ============ */
+.tabbar-5 { grid-template-columns: repeat(2, 1fr) auto repeat(2, 1fr); }
+.tabbar button { position: relative; }
+.tabbar .badge {
+  position: absolute; top: 2px; left: 50%; margin-left: 6px;
+  min-width: 15px; height: 15px; padding: 0 3px;
+  background: var(--up); color: #fff; font-size: .62rem; font-weight: 700;
+  border-radius: 999px; display: grid; place-items: center; line-height: 1;
+}
+
+.seg { display: flex; gap: 4px; margin-bottom: 12px; }
+.seg button {
+  flex: 1; background: transparent; color: var(--muted);
+  border: 1px solid var(--border); font-weight: 600; font-size: .88rem;
+}
+.seg button.on { background: var(--accent); color: #fff; border-color: transparent; }
+
+.challenge-card {
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: 12px; padding: 14px; margin-bottom: 12px; cursor: pointer;
+}
+.cc-title { font-weight: 700; }
+.cc-meta { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-top: 6px; color: var(--muted); font-size: .84rem; }
+.cc-badge { background: var(--accent-soft); color: var(--accent); border-radius: 999px; padding: 2px 8px; font-weight: 600; }
+
+.challenge-detail h2 { margin-bottom: 2px; }
+.cd-desc { white-space: pre-wrap; line-height: 1.6; margin: 10px 0 14px; }
+.cd-progress { margin: 14px 0; }
+.pbar, .mini-bar { background: var(--card-2); border-radius: 999px; overflow: hidden; }
+.pbar { height: 10px; }
+.pfill, .mini-fill { height: 100%; background: var(--accent); border-radius: 999px; transition: width .3s; }
+.pnum { margin-top: 6px; font-size: .85rem; color: var(--muted); }
+.check-btn { width: 100%; margin-top: 4px; }
+.check-btn.done { background: var(--down); }
+.leave-btn { width: 100%; margin-top: 8px; color: var(--muted); }
+.challenge-detail > button:not(.check-btn):not(.leave-btn) { width: 100%; }
+
+.member-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-top: 1px solid var(--border); }
+.member-row:first-of-type { border-top: 0; }
+.member-row .handle { flex-shrink: 0; width: 90px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mini-bar { flex: 1; height: 6px; }
+.mnum { flex-shrink: 0; font-size: .8rem; color: var(--muted); width: 34px; text-align: right; }
+
+.notif {
+  display: flex; justify-content: space-between; align-items: baseline; gap: 10px;
+  width: 100%; text-align: left; background: var(--card); color: var(--text);
+  border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px;
+  margin-bottom: 8px; font-weight: 400;
+}
+.notif.unread { border-color: var(--accent); background: var(--accent-soft); }
+.notif-time { flex-shrink: 0; color: var(--muted); font-size: .8rem; }
+
+.profile-head { align-items: center; }
+.profile-id { flex: 1; min-width: 0; }
+.profile-head > button { flex-shrink: 0; }
+.profile-stats b { color: var(--text); }

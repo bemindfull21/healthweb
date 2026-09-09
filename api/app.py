@@ -195,6 +195,20 @@ def iso_z(d: Optional[dt.datetime] = None) -> str:
     return d.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def notify(recipient: str, kind: str, actor: str, post_id: Optional[int] = None) -> None:
+    """recipient에게 알림. 자기 행동은 건너뛴다."""
+    if recipient == actor:
+        return
+    dml(
+        "insert into healthweb.notification (login_id, kind, actor, post_id) "
+        "values (:r, :k, :a, :p)",
+        r=recipient, k=kind, a=actor, p=post_id,
+    )
+
+
+DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
 # ---------- 모델 ----------
 
 class SignupIn(BaseModel):
@@ -239,6 +253,16 @@ class PostIn(BaseModel):
 
 class CommentIn(BaseModel):
     body: str
+
+
+class ChallengeIn(BaseModel):
+    title: str
+    description: Optional[str] = None
+    target_days: int
+
+
+class CheckinIn(BaseModel):
+    date: str
 
 
 # ---------- 헬스체크 ----------
@@ -464,12 +488,24 @@ FEED_SQL = """
 
 
 @app.get("/feed")
-def feed(u: dict = Depends(current_user), cursor: Optional[int] = None, limit: int = 20) -> dict:
+def feed(
+    u: dict = Depends(current_user),
+    cursor: Optional[int] = None,
+    limit: int = 20,
+    scope: str = "following",
+) -> dict:
     limit = max(1, min(limit, 50))
-    where = "where p.id < :cur" if cursor else ""
+    conds = []
     binds = {"viewer": u["login_id"], "lim": limit}
+    if scope == "following":
+        conds.append(
+            "(p.login_id = :viewer or p.login_id in "
+            "(select followee from healthweb.follow where follower = :viewer))"
+        )
     if cursor:
+        conds.append("p.id < :cur")
         binds["cur"] = cursor
+    where = ("where " + " and ".join(conds)) if conds else ""
     rows = qall(FEED_SQL.format(where=where), **binds)
     items = [_post_row(r) for r in rows]
     return {"items": items, "next_cursor": items[-1]["id"] if len(items) == limit else None}
@@ -521,13 +557,15 @@ def get_post(post_id: int, u: dict = Depends(current_user)) -> dict:
 
 @app.post("/posts/{post_id}/encourage")
 def encourage(post_id: int, u: dict = Depends(current_user)) -> dict:
-    if q1("select 1 as x from healthweb.post where id = :p", p=post_id) is None:
+    author = q1("select login_id from healthweb.post where id = :p", p=post_id)
+    if author is None:
         raise HTTPException(404, "글을 찾을 수 없습니다")
     try:
         dml(
             "insert into healthweb.encouragement (post_id, login_id) values (:p, :l)",
             p=post_id, l=u["login_id"],
         )
+        notify(author["login_id"], "encourage", u["login_id"], post_id)
     except oracledb.IntegrityError:
         pass
     return {"ok": True}
@@ -539,6 +577,11 @@ def unencourage(post_id: int, u: dict = Depends(current_user)) -> dict:
         "delete from healthweb.encouragement where post_id = :p and login_id = :l",
         p=post_id, l=u["login_id"],
     )
+    dml(
+        "delete from healthweb.notification where kind = 'encourage' and post_id = :p "
+        "and actor = :l and read_at is null",
+        p=post_id, l=u["login_id"],
+    )
     return {"ok": True}
 
 
@@ -547,13 +590,15 @@ def add_comment(post_id: int, body: CommentIn, u: dict = Depends(current_user)) 
     text = body.body.strip()
     if not (1 <= len(text) <= 1000):
         raise HTTPException(400, "댓글은 1–1000자입니다")
-    if q1("select 1 as x from healthweb.post where id = :p", p=post_id) is None:
+    author = q1("select login_id from healthweb.post where id = :p", p=post_id)
+    if author is None:
         raise HTTPException(404, "글을 찾을 수 없습니다")
     cid = insert_id(
         "insert into healthweb.post_comment (post_id, login_id, body) "
         "values (:p, :l, :b) returning id into :new_id",
         p=post_id, l=u["login_id"], b=text,
     )
+    notify(author["login_id"], "comment", u["login_id"], post_id)
     return {"id": cid}
 
 
@@ -597,13 +642,20 @@ def profile(handle: str, u: dict = Depends(current_user)) -> dict:
     if p is None:
         raise HTTPException(404, "없는 사용자입니다")
 
+    pl = p["login_id"]
     out = {
         "name": p["name"],
         "bio": p["bio"],
         "created_at": iso_z(p["created_at"]),
         "weight_privacy": p["weight_privacy"],
-        "streak": _streak(p["login_id"]),
-        "mine": p["login_id"] == u["login_id"],
+        "streak": _streak(pl),
+        "mine": pl == u["login_id"],
+        "followers": q1("select count(*) c from healthweb.follow where followee = :v", v=pl)["c"],
+        "following": q1("select count(*) c from healthweb.follow where follower = :v", v=pl)["c"],
+        "i_follow": q1(
+            "select 1 x from healthweb.follow where follower = :me and followee = :v",
+            me=u["login_id"], v=pl,
+        ) is not None,
     }
     if p["weight_privacy"] in ("trend", "public"):
         recent = qall(
@@ -629,3 +681,247 @@ def profile(handle: str, u: dict = Depends(current_user)) -> dict:
     )
     out["posts"] = [_post_row(r) for r in posts]
     return out
+
+
+# ---------- 팔로우 ----------
+
+def _login_id_by_name(name: str) -> str:
+    row = q1(
+        "select login_id from healthweb.app_user where lower(name) = lower(:h)",
+        h=" ".join(name.split()),
+    )
+    if row is None:
+        raise HTTPException(404, "없는 사용자입니다")
+    return row["login_id"]
+
+
+@app.post("/u/{handle}/follow")
+def follow(handle: str, u: dict = Depends(current_user)) -> dict:
+    target = _login_id_by_name(handle)
+    if target == u["login_id"]:
+        raise HTTPException(400, "자기 자신은 팔로우할 수 없습니다")
+    try:
+        dml(
+            "insert into healthweb.follow (follower, followee) values (:me, :t)",
+            me=u["login_id"], t=target,
+        )
+        notify(target, "follow", u["login_id"])
+    except oracledb.IntegrityError:
+        pass
+    return {"ok": True}
+
+
+@app.delete("/u/{handle}/follow")
+def unfollow(handle: str, u: dict = Depends(current_user)) -> dict:
+    target = _login_id_by_name(handle)
+    dml(
+        "delete from healthweb.follow where follower = :me and followee = :t",
+        me=u["login_id"], t=target,
+    )
+    return {"ok": True}
+
+
+@app.get("/u/{handle}/{rel}")
+def follow_list(handle: str, rel: str, u: dict = Depends(current_user)) -> dict:
+    if rel not in ("followers", "following"):
+        raise HTTPException(404, "not found")
+    lid = _login_id_by_name(handle)
+    col, other = ("followee", "follower") if rel == "followers" else ("follower", "followee")
+    rows = qall(
+        "select au.name, "
+        "case when exists (select 1 from healthweb.follow x "
+        "  where x.follower = :me and x.followee = au.login_id) then 1 else 0 end i_follow "
+        "from healthweb.follow f join healthweb.app_user au on au.login_id = f." + other + " "
+        "where f." + col + " = :lid order by f.created_at desc",
+        me=u["login_id"], lid=lid,
+    )
+    return {"users": [{"name": r["name"], "i_follow": bool(r["i_follow"])} for r in rows]}
+
+
+# ---------- 챌린지 (데일리 체크인) ----------
+
+def _challenge_progress(challenge_id: int, login_id: str) -> dict:
+    rows = qall(
+        "select check_date from healthweb.challenge_checkin "
+        "where challenge_id = :c and login_id = :l order by check_date desc",
+        c=challenge_id, l=login_id,
+    )
+    dates = [r["check_date"] for r in rows]
+    streak = 0
+    if dates:
+        have = set(dates)
+        cur = dt.datetime.strptime(dates[0], "%Y-%m-%d").date()
+        while cur.strftime("%Y-%m-%d") in have:
+            streak += 1
+            cur -= dt.timedelta(days=1)
+    return {"done": len(dates), "streak": streak, "dates": dates}
+
+
+@app.get("/challenges")
+def list_challenges(u: dict = Depends(current_user)) -> dict:
+    rows = qall(
+        "select c.id, c.title, c.target_days, au.name owner_name, "
+        "(select count(*) from healthweb.challenge_member m where m.challenge_id = c.id) member_count, "
+        "case when exists (select 1 from healthweb.challenge_member m "
+        "  where m.challenge_id = c.id and m.login_id = :me) then 1 else 0 end i_joined "
+        "from healthweb.challenge c join healthweb.app_user au on au.login_id = c.owner "
+        "order by c.id desc fetch first 50 rows only",
+        me=u["login_id"],
+    )
+    out = []
+    for r in rows:
+        item = {
+            "id": r["id"], "title": r["title"], "target_days": r["target_days"],
+            "owner_name": r["owner_name"], "member_count": r["member_count"],
+            "i_joined": bool(r["i_joined"]),
+        }
+        if item["i_joined"]:
+            item["progress"] = _challenge_progress(r["id"], u["login_id"])["done"]
+        out.append(item)
+    return {"items": out}
+
+
+@app.post("/challenges")
+def create_challenge(body: ChallengeIn, u: dict = Depends(current_user)) -> dict:
+    title = body.title.strip()
+    if not (2 <= len(title) <= 60):
+        raise HTTPException(400, "제목은 2–60자입니다")
+    if not (1 <= body.target_days <= 365):
+        raise HTTPException(400, "목표 일수는 1–365입니다")
+    if not rate_ok(f"chal:{u['login_id']}", 5, 3600):
+        raise HTTPException(429, "잠시 후 다시 시도해 주세요")
+    desc = (body.description or "").strip()[:500] or None
+    cid = insert_id(
+        "insert into healthweb.challenge (owner, title, description, target_days) "
+        "values (:o, :t, :d, :n) returning id into :new_id",
+        o=u["login_id"], t=title, d=desc, n=body.target_days,
+    )
+    dml(
+        "insert into healthweb.challenge_member (challenge_id, login_id) values (:c, :l)",
+        c=cid, l=u["login_id"],
+    )
+    return {"id": cid}
+
+
+@app.get("/challenges/{cid}")
+def get_challenge(cid: int, u: dict = Depends(current_user)) -> dict:
+    c = q1(
+        "select c.id, c.title, c.description, c.target_days, c.owner, au.name owner_name, c.created_at "
+        "from healthweb.challenge c join healthweb.app_user au on au.login_id = c.owner where c.id = :c",
+        c=cid,
+    )
+    if c is None:
+        raise HTTPException(404, "챌린지를 찾을 수 없습니다")
+    members = qall(
+        "select m.login_id, au.name from healthweb.challenge_member m "
+        "join healthweb.app_user au on au.login_id = m.login_id "
+        "where m.challenge_id = :c order by m.joined_at",
+        c=cid,
+    )
+    mine = _challenge_progress(cid, u["login_id"])
+    return {
+        "id": c["id"], "title": c["title"], "description": c["description"],
+        "target_days": c["target_days"], "owner_name": c["owner_name"],
+        "mine": c["owner"] == u["login_id"], "created_at": iso_z(c["created_at"]),
+        "i_joined": any(m["login_id"] == u["login_id"] for m in members),
+        "my_progress": mine["done"], "my_streak": mine["streak"], "my_dates": mine["dates"],
+        "members": [
+            {"name": m["name"], "progress": _challenge_progress(cid, m["login_id"])["done"],
+             "mine": m["login_id"] == u["login_id"]}
+            for m in members
+        ],
+    }
+
+
+@app.post("/challenges/{cid}/join")
+def join_challenge(cid: int, u: dict = Depends(current_user)) -> dict:
+    if q1("select 1 x from healthweb.challenge where id = :c", c=cid) is None:
+        raise HTTPException(404, "챌린지를 찾을 수 없습니다")
+    try:
+        dml(
+            "insert into healthweb.challenge_member (challenge_id, login_id) values (:c, :l)",
+            c=cid, l=u["login_id"],
+        )
+    except oracledb.IntegrityError:
+        pass
+    return {"ok": True}
+
+
+@app.delete("/challenges/{cid}/leave")
+def leave_challenge(cid: int, u: dict = Depends(current_user)) -> dict:
+    dml("delete from healthweb.challenge_checkin where challenge_id = :c and login_id = :l",
+        c=cid, l=u["login_id"])
+    dml("delete from healthweb.challenge_member where challenge_id = :c and login_id = :l",
+        c=cid, l=u["login_id"])
+    return {"ok": True}
+
+
+@app.post("/challenges/{cid}/checkin")
+def checkin(cid: int, body: CheckinIn, u: dict = Depends(current_user)) -> dict:
+    d = body.date.strip()
+    if not DATE_RE.match(d):
+        raise HTTPException(400, "날짜 형식이 올바르지 않습니다")
+    if q1("select 1 x from healthweb.challenge_member where challenge_id = :c and login_id = :l",
+          c=cid, l=u["login_id"]) is None:
+        raise HTTPException(400, "먼저 챌린지에 참여하세요")
+    try:
+        dml(
+            "insert into healthweb.challenge_checkin (challenge_id, login_id, check_date) "
+            "values (:c, :l, :d)",
+            c=cid, l=u["login_id"], d=d,
+        )
+    except oracledb.IntegrityError:
+        pass
+    return _challenge_progress(cid, u["login_id"])
+
+
+@app.delete("/challenges/{cid}/checkin/{date}")
+def uncheckin(cid: int, date: str, u: dict = Depends(current_user)) -> dict:
+    dml(
+        "delete from healthweb.challenge_checkin where challenge_id = :c and login_id = :l and check_date = :d",
+        c=cid, l=u["login_id"], d=date,
+    )
+    return _challenge_progress(cid, u["login_id"])
+
+
+# ---------- 알림 ----------
+
+@app.get("/notifications")
+def notifications(u: dict = Depends(current_user), cursor: Optional[int] = None, limit: int = 30) -> dict:
+    limit = max(1, min(limit, 50))
+    where = "and n.id < :cur" if cursor else ""
+    binds = {"me": u["login_id"], "lim": limit}
+    if cursor:
+        binds["cur"] = cursor
+    rows = qall(
+        "select n.id, n.kind, n.post_id, n.read_at, n.created_at, au.name actor_name "
+        "from healthweb.notification n join healthweb.app_user au on au.login_id = n.actor "
+        "where n.login_id = :me " + where + " order by n.id desc fetch first :lim rows only",
+        **binds,
+    )
+    items = [
+        {"id": r["id"], "kind": r["kind"], "post_id": r["post_id"],
+         "actor_name": r["actor_name"], "read": r["read_at"] is not None,
+         "created_at": iso_z(r["created_at"])}
+        for r in rows
+    ]
+    return {"items": items, "next_cursor": items[-1]["id"] if len(items) == limit else None}
+
+
+@app.get("/notifications/unread-count")
+def unread_count(u: dict = Depends(current_user)) -> dict:
+    row = q1(
+        "select count(*) c from healthweb.notification where login_id = :me and read_at is null",
+        me=u["login_id"],
+    )
+    return {"count": row["c"]}
+
+
+@app.post("/notifications/read")
+def mark_read(u: dict = Depends(current_user)) -> dict:
+    dml(
+        "update healthweb.notification set read_at = systimestamp "
+        "where login_id = :me and read_at is null",
+        me=u["login_id"],
+    )
+    return {"ok": True}
