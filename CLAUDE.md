@@ -102,7 +102,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 사진(**VM 파일시스템** — OCI 대신, 규모상) · 아바타 · 진행/글 사진(글 공유 시에만) · 신고 + 관리자 큐.
 프론트: `Avatar`·`ImageUpload`(canvas 리사이즈)·`Lightbox` 컴포넌트 · `PostCard`/`PostView` 이미지·아바타 렌더 ·
-`WeightModal`/`PostModal`/`SettingsView` 이미지 첨부 · `PostView`·`ProfileView` ⋯메뉴에 신고 · `AdminReportsView`(`/admin`, `me.is_owner`면 설정에 링크) · `MeView` 표에 진행 사진 썸네일.
+`WeightModal`(진행 사진 항상 노출, 첨부 시 자동 공유)·`PostModal`·`SettingsView`(avatar-row) 이미지 첨부 · `PostView`·`ProfileView` ⋯메뉴에 신고 · `AdminReportsView`(`/admin`, `me.is_owner`면 설정에 링크) · `MeView` 표에 진행 사진 썸네일.
+`MeView` 상단에 프로필 헤더(아바타·이름·"내 프로필 보기"·**설정** 버튼) — 이전엔 `/settings` 진입점이 자기 글의 이름 탭뿐이었음.
 
 ## 미완 (Phase 3c+)
 
