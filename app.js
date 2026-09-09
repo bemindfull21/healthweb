@@ -75,6 +75,24 @@ function nowLocalInput() {
   d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
   return d.toISOString().slice(0, 16);
 }
+function resizeImage(file, maxDim) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(img.src);
+      let { width, height } = img;
+      const scale = Math.min(1, maxDim / Math.max(width, height));
+      width = Math.max(1, Math.round(width * scale));
+      height = Math.max(1, Math.round(height * scale));
+      const c = document.createElement("canvas");
+      c.width = width; c.height = height;
+      c.getContext("2d").drawImage(img, 0, 0, width, height);
+      c.toBlob((b) => (b ? resolve(b) : reject(new Error("이미지 변환 실패"))), "image/jpeg", 0.85);
+    };
+    img.onerror = () => reject(new Error("이미지를 읽을 수 없습니다"));
+    img.src = URL.createObjectURL(file);
+  });
+}
 
 // ---------- 전역 스토어 ----------
 const Store = createContext(null);
@@ -159,13 +177,18 @@ function EncourageBtn({ post, big }) {
 
 function PostCard({ post }) {
   const { nav } = useStore();
+  const goUser = (e) => { e.stopPropagation(); nav(`/u/${encodeURIComponent(post.name)}`); };
   return html`<article class="post-card" onClick=${() => nav(`/p/${post.id}`)}>
     <div class="post-head">
-      <button class="handle" onClick=${(e) => { e.stopPropagation(); nav(`/u/${encodeURIComponent(post.name)}`); }}>${post.name}</button>
+      <button class="pc-user" onClick=${goUser}>
+        <${Avatar} src=${post.avatar && post.avatar.thumb_url} name=${post.name} size="sm" />
+        <span class="handle">${post.name}</span>
+      </button>
       <${KindBadge} kind=${post.kind} />
       <span class="post-time">${relTime(post.created_at)}</span>
     </div>
     <p class="post-body">${post.body}</p>
+    ${post.image && html`<img class="post-img" src=${post.image.thumb_url || post.image.url} alt="" loading="lazy" />`}
     ${post.kind === "log" && post.weight != null &&
       html`<div class="post-weight">${fmtKg(post.weight)} kg</div>`}
     <div class="post-actions">
@@ -254,6 +277,71 @@ function Sparkline({ data }) {
         vector-effect="non-scaling-stroke" />
     </svg>
     <span class="spark-range">${fmtKg(data[0])} → ${fmtKg(data[data.length - 1])} kg</span>
+  </div>`;
+}
+
+// ---------- 아바타 · 이미지 ----------
+function Avatar({ src, name, size }) {
+  const cls = "avatar" + (size ? " " + size : "");
+  return src
+    ? html`<img class=${cls} src=${src} alt=${name || ""} loading="lazy" />`
+    : html`<div class=${cls}>${(name || "?")[0].toUpperCase()}</div>`;
+}
+
+function ImageUpload({ kind, value, onChange, label = "사진 추가", compact }) {
+  const { toast } = useStore();
+  const [busy, setBusy] = useState(false);
+  const inp = useRef(null);
+  const pick = async (e) => {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = "";
+    if (!file) return;
+    if (!/^image\/(jpeg|png|webp)$/.test(file.type)) return toast("JPEG · PNG · WebP만 올릴 수 있어요", "err");
+    setBusy(true);
+    try {
+      const blob = await resizeImage(file, kind === "avatar" ? 800 : 1600);
+      const fd = new FormData();
+      fd.append("file", blob, "upload.jpg");
+      fd.append("kind", kind);
+      const res = await fetch(API + "/media", {
+        method: "POST", headers: { Authorization: "Bearer " + token() }, body: fd,
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || "업로드에 실패했어요");
+      onChange(data);
+    } catch (err) { toast(err.message, "err"); }
+    finally { setBusy(false); }
+  };
+  if (compact) {
+    return html`<div class="img-upload compact">
+      <button type="button" class="iu-btn" disabled=${busy} onClick=${() => inp.current.click()}>
+        ${busy ? "올리는 중…" : (value ? "변경" : "📷 " + label)}
+      </button>
+      ${value && html`<button type="button" class="iu-rm" onClick=${() => onChange(null)}>제거</button>`}
+      <input ref=${inp} type="file" accept="image/jpeg,image/png,image/webp" hidden onChange=${pick} />
+    </div>`;
+  }
+  return html`<div class="img-upload">
+    ${value
+      ? html`<div class="iu-preview">
+          <img src=${value.thumb_url || value.url} alt="" />
+          <button type="button" class="iu-x" onClick=${() => onChange(null)} aria-label="사진 제거">✕</button>
+        </div>`
+      : html`<button type="button" class="iu-btn" disabled=${busy} onClick=${() => inp.current.click()}>
+          ${busy ? "올리는 중…" : "📷 " + label}
+        </button>`}
+    <input ref=${inp} type="file" accept="image/jpeg,image/png,image/webp" hidden onChange=${pick} />
+  </div>`;
+}
+
+function Lightbox({ src, onClose }) {
+  useEffect(() => {
+    const esc = (e) => e.key === "Escape" && onClose();
+    addEventListener("keydown", esc);
+    return () => removeEventListener("keydown", esc);
+  }, [onClose]);
+  return html`<div class="lightbox" onClick=${onClose}>
+    <img src=${src} alt="" onClick=${(e) => e.stopPropagation()} />
   </div>`;
 }
 
@@ -366,6 +454,7 @@ function MeView() {
   const { me, bumpKey, openWeight, toast } = useStore();
   const [data, setData] = useState(null);
   const [state, setState] = useState("loading");
+  const [zoom, setZoom] = useState(null);
 
   const load = useCallback(async () => {
     try { setData(await api("/weights")); setState("ok"); }
@@ -411,13 +500,18 @@ function MeView() {
               <td>${e.date} ${e.time.slice(0, 5)}</td>
               <td>${fmtKg(e.weight)} kg</td>
               <td class=${d == null || Math.abs(d) < 0.05 ? "" : d > 0 ? "delta-up" : "delta-down"}>${d == null ? "–" : Math.abs(d) < 0.05 ? "±0" : (d > 0 ? "+" : "−") + fmtKg(Math.abs(d))}</td>
-              <td class="q">${e.note || "–"}</td>
+              <td class="q">
+                ${e.photo && html`<img class="entry-thumb" src=${e.photo.thumb_url || e.photo.url} alt="진행 사진"
+                  onClick=${() => setZoom(e.photo.url)} />`}
+                ${e.note || (e.photo ? "" : "–")}
+              </td>
               <td><button class="row-del" onClick=${() => del(e.id)} aria-label="삭제">✕</button></td>
             </tr>`;
           })}</tbody></table></div>
         </div>`}
 
     <button class="fab" onClick=${openWeight} aria-label="몸무게 기록">＋</button>
+    ${zoom && html`<${Lightbox} src=${zoom} onClose=${() => setZoom(null)} />`}
   </div>`;
 }
 
@@ -428,6 +522,8 @@ function PostView({ id }) {
   const [state, setState] = useState("loading");
   const [cmt, setCmt] = useState("");
   const [sending, setSending] = useState(false);
+  const [menu, setMenu] = useState(false);
+  const [zoom, setZoom] = useState(false);
 
   const load = useCallback(async () => {
     try { setPost(await api(`/posts/${id}`)); setState("ok"); }
@@ -456,6 +552,15 @@ function PostView({ id }) {
       load();
     } catch (e) { toast(e.detail, "err"); }
   };
+  const report = async () => {
+    setMenu(false);
+    const reason = prompt("신고 사유를 적어주세요 (선택)");
+    if (reason === null) return;
+    try {
+      await api("/reports", { method: "POST", body: { target_kind: "post", target_id: String(id), reason } });
+      toast("신고를 접수했습니다");
+    } catch (e) { toast(e.detail, "err"); }
+  };
 
   if (state === "loading") return html`<${Spinner} />`;
   if (state === "gone") return html`<div class="view"><${ErrorBox} msg="삭제되었거나 없는 글입니다" /></div>`;
@@ -463,20 +568,36 @@ function PostView({ id }) {
 
   return html`<div class="view post-detail">
     <div class="post-head">
-      <button class="handle" onClick=${() => nav(`/u/${encodeURIComponent(post.name)}`)}>${post.name}</button>
+      <button class="pc-user" onClick=${() => nav(`/u/${encodeURIComponent(post.name)}`)}>
+        <${Avatar} src=${post.avatar && post.avatar.thumb_url} name=${post.name} size="sm" />
+        <span class="handle">${post.name}</span>
+      </button>
       <${KindBadge} kind=${post.kind} />
       <span class="post-time">${relTime(post.created_at)}</span>
-      ${post.mine && html`<button class="row-del" onClick=${togglePin}>${post.pinned ? "고정 해제" : "고정"}</button>`}
-      ${post.mine && html`<button class="row-del" onClick=${delPost} aria-label="삭제">✕</button>`}
+      <div class="pd-menu">
+        <button class="icon-btn" onClick=${() => setMenu(!menu)} aria-label="더보기">⋯</button>
+        ${menu && html`<div class="menu-pop">
+          ${post.mine
+            ? html`<button class="plain" onClick=${() => { setMenu(false); togglePin(); }}>${post.pinned ? "고정 해제" : "프로필에 고정"}</button>
+                   <button onClick=${() => { setMenu(false); delPost(); }}>삭제</button>`
+            : html`<button onClick=${report}>신고</button>`}
+        </div>`}
+      </div>
     </div>
     <p class="post-body full">${post.body}</p>
+    ${post.image && html`<img class="post-img full" src=${post.image.url} alt=""
+      onClick=${() => setZoom(true)} loading="lazy" />`}
     ${post.kind === "log" && post.weight != null && html`<div class="post-weight big">${fmtKg(post.weight)} kg</div>`}
     <div class="post-actions"><${EncourageBtn} post=${post} big=${true} /></div>
+    ${zoom && post.image && html`<${Lightbox} src=${post.image.url} onClose=${() => setZoom(false)} />`}
 
     <div class="comments">
       <h3>댓글 ${post.comments.length || ""}</h3>
       ${post.comments.map((c) => html`<div class="comment" key=${c.id}>
-        <button class="handle" onClick=${() => nav(`/u/${encodeURIComponent(c.name)}`)}>${c.name}</button>
+        <button class="pc-user" onClick=${() => nav(`/u/${encodeURIComponent(c.name)}`)}>
+          <${Avatar} src=${c.avatar && c.avatar.thumb_url} name=${c.name} size="sm" />
+          <span class="handle">${c.name}</span>
+        </button>
         <span class="post-time">${relTime(c.created_at)}</span>
         <p>${c.body}</p>
       </div>`)}
@@ -526,6 +647,15 @@ function ProfileView({ handle }) {
     try { await api(`/u/${encodeURIComponent(handle)}/block`, { method: "DELETE" }); toast("차단을 해제했습니다"); load(); }
     catch (e) { toast(e.detail, "err"); }
   };
+  const report = async () => {
+    setMenu(false);
+    const reason = prompt("신고 사유를 적어주세요 (선택)");
+    if (reason === null) return;
+    try {
+      await api("/reports", { method: "POST", body: { target_kind: "user", target_id: p.name, reason } });
+      toast("신고를 접수했습니다");
+    } catch (e) { toast(e.detail, "err"); }
+  };
 
   if (state === "loading") return html`<${Spinner} />`;
   if (state === "gone") return html`<div class="view"><${ErrorBox} msg="없는 사용자입니다" /></div>`;
@@ -544,7 +674,7 @@ function ProfileView({ handle }) {
     : null;
   return html`<div class="view profile">
     <div class="profile-head">
-      <div class="avatar">${(p.name || "?")[0].toUpperCase()}</div>
+      <${Avatar} src=${p.avatar && p.avatar.url} name=${p.name} size="lg" />
       <div class="profile-id">
         <div class="phandle">${p.name}</div>
         ${p.bio && html`<p class="pbio">${p.bio}</p>`}
@@ -554,7 +684,10 @@ function ProfileView({ handle }) {
         : html`<div class="profile-actions">
             <button class=${following ? "ghost" : ""} onClick=${toggleFollow}>${following ? "팔로잉" : "팔로우"}</button>
             <button class="icon-btn" onClick=${() => setMenu(!menu)} aria-label="더보기">⋯</button>
-            ${menu && html`<div class="menu-pop"><button onClick=${block}>차단</button></div>`}
+            ${menu && html`<div class="menu-pop">
+              <button class="plain" onClick=${report}>신고</button>
+              <button onClick=${block}>차단</button>
+            </div>`}
           </div>`}
     </div>
 
@@ -720,17 +853,29 @@ function NotificationsView() {
 
 // ---------- 뷰: 설정 ----------
 function SettingsView() {
-  const { setMe, toast } = useStore();
+  const { setMe, toast, nav } = useStore();
   const [f, setF] = useState({ login_id: "", name: "", bio: "", link: "", location: "", target_weight: "", weight_privacy: "private" });
   const [pw, setPw] = useState({ current_password: "", new_password: "" });
+  const [avatar, setAvatar] = useState(null);
+  const [meInfo, setMeInfo] = useState({});
   useEffect(() => {
     api("/auth/me").then((d) => {
-      setMe(d);
+      setMe(d); setMeInfo(d);
+      setAvatar(d.avatar || null);
       setF({ login_id: d.login_id || "", name: d.name || "", bio: d.bio || "",
         link: d.link || "", location: d.location || "",
         target_weight: d.target_weight ?? "", weight_privacy: d.weight_privacy || "private" });
     }).catch(() => {});
   }, []);
+
+  const changeAvatar = async (media) => {
+    setAvatar(media);
+    try {
+      await api("/auth/me", { method: "PATCH", body: { avatar_media_id: media ? media.id : 0 } });
+      const fresh = await api("/auth/me"); setMe(fresh);
+      toast(media ? "프로필 사진을 바꿨습니다" : "프로필 사진을 지웠습니다");
+    } catch (e) { toast(e.detail, "err"); }
+  };
 
   const saveProfile = async () => {
     try {
@@ -752,8 +897,15 @@ function SettingsView() {
 
   const upd = (k) => (e) => setF({ ...f, [k]: e.target.value });
   return html`<div class="view settings">
+    ${meInfo.is_owner && html`<button class="admin-link" onClick=${() => nav("/admin")}>
+      신고 관리${meInfo.open_reports ? ` (${meInfo.open_reports})` : ""}
+    </button>`}
     <div class="panel">
       <div class="panel-head"><span>프로필</span></div>
+      <div class="avatar-row">
+        <${Avatar} src=${avatar && avatar.url} name=${f.name} size="lg" />
+        <${ImageUpload} kind="avatar" value=${avatar} onChange=${changeAvatar} label="프로필 사진" compact=${true} />
+      </div>
       <label>아이디 <span class="hint">변경 불가 · 비공개</span>
         <input value=${f.login_id} disabled /></label>
       <label>이름 <span class="hint">피드·프로필에 표시됨</span>
@@ -788,6 +940,64 @@ function SettingsView() {
   </div>`;
 }
 
+// ---------- 뷰: 신고 관리 (오너) ----------
+function AdminReportsView() {
+  const { nav, toast } = useStore();
+  const [items, setItems] = useState(null);
+  const [state, setState] = useState("loading");
+
+  const load = useCallback(() => {
+    setState("loading");
+    api("/admin/reports").then((d) => { setItems(d.items); setState("ok"); })
+      .catch((e) => setState(e.status === 403 ? "forbidden" : "err"));
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  const resolve = async (rid, action) => {
+    if (action && !confirm(action === "delete_post" ? "이 글을 삭제할까요?" : "이 댓글을 삭제할까요?")) return;
+    try {
+      await api(`/admin/reports/${rid}/resolve`, { method: "POST", body: { action: action || "none" } });
+      toast("처리했습니다"); load();
+    } catch (e) { toast(e.detail, "err"); }
+  };
+
+  if (state === "loading") return html`<${Spinner} />`;
+  if (state === "forbidden") return html`<div class="view"><${ErrorBox} msg="권한이 없습니다" /></div>`;
+  if (state === "err") return html`<div class="view"><${ErrorBox} msg="불러오지 못했습니다" onRetry=${load} /></div>`;
+  if (items.length === 0) return html`<div class="empty">처리할 신고가 없어요.</div>`;
+
+  return html`<div class="view admin">
+    ${items.map((r) => {
+      const c = r.context || {};
+      return html`<div class="report-card" key=${r.id}>
+        <div class="rc-head">
+          <span class="rc-kind">${r.target_kind === "post" ? "글" : r.target_kind === "comment" ? "댓글" : "사용자"}</span>
+          <span class="rc-by">${r.reporter_name} 신고 · ${relTime(r.created_at)}</span>
+        </div>
+        ${r.reason && html`<p class="rc-reason">"${r.reason}"</p>`}
+        <div class="rc-target">
+          ${c.gone
+            ? html`<span class="muted">(이미 삭제됨)</span>`
+            : r.target_kind === "user"
+              ? html`<b>${c.name}</b>${c.bio ? html` — ${c.bio}` : ""}`
+              : html`<span class="muted sm">${c.author}</span> ${c.excerpt}`}
+        </div>
+        <div class="rc-actions">
+          ${!c.gone && r.target_kind === "post" && html`
+            <button class="ghost" onClick=${() => nav(`/p/${c.post_id}`)}>글 보기</button>
+            <button class="danger" onClick=${() => resolve(r.id, "delete_post")}>글 삭제</button>`}
+          ${!c.gone && r.target_kind === "comment" && html`
+            <button class="ghost" onClick=${() => nav(`/p/${c.post_id}`)}>글 보기</button>
+            <button class="danger" onClick=${() => resolve(r.id, "delete_comment")}>댓글 삭제</button>`}
+          ${!c.gone && r.target_kind === "user" && html`
+            <button class="ghost" onClick=${() => nav(`/u/${encodeURIComponent(c.name)}`)}>프로필</button>`}
+          <button onClick=${() => resolve(r.id, null)}>무시</button>
+        </div>
+      </div>`;
+    })}
+  </div>`;
+}
+
 // ---------- 모달 ----------
 function Modal({ title, onClose, children }) {
   return html`<div class="modal-back" onClick=${onClose}>
@@ -805,6 +1015,7 @@ function WeightModal({ onClose }) {
   const [at, setAt] = useState(nowLocalInput());
   const [note, setNote] = useState("");
   const [share, setShare] = useState(false);
+  const [photo, setPhoto] = useState(null);
   const [busy, setBusy] = useState(false);
 
   const submit = async (e) => {
@@ -813,7 +1024,10 @@ function WeightModal({ onClose }) {
     if (!(weight >= 20 && weight <= 300)) return toast("몸무게는 20–300kg", "err");
     setBusy(true);
     try {
-      await api("/weights", { method: "POST", body: { weight, logged_at: at, note, share } });
+      await api("/weights", {
+        method: "POST",
+        body: { weight, logged_at: at, note, share, photo_media_id: share && photo ? photo.id : null },
+      });
       bump(); toast("기록했습니다"); onClose();
     } catch (err) { toast(err.detail, "err"); setBusy(false); }
   };
@@ -826,6 +1040,7 @@ function WeightModal({ onClose }) {
       <label>메모 (선택)
         <input value=${note} onInput=${(e) => setNote(e.target.value)} maxlength="500" placeholder="컨디션, 상황…" /></label>
       <label class="check"><input type="checkbox" checked=${share} onChange=${(e) => setShare(e.target.checked)} /> 이 기록을 글로 공유</label>
+      ${share && html`<${ImageUpload} kind="progress" value=${photo} onChange=${setPhoto} label="진행 사진" />`}
       <button disabled=${busy}>저장</button>
     </form>
   <//>`;
@@ -835,13 +1050,17 @@ function PostModal({ onClose }) {
   const { bump, toast, nav } = useStore();
   const [kind, setKind] = useState("routine");
   const [body, setBody] = useState("");
+  const [image, setImage] = useState(null);
   const [busy, setBusy] = useState(false);
   const submit = async (e) => {
     e.preventDefault();
     if (!body.trim() || busy) return;
     setBusy(true);
     try {
-      const { id } = await api("/posts", { method: "POST", body: { kind, body: body.trim() } });
+      const { id } = await api("/posts", {
+        method: "POST",
+        body: { kind, body: body.trim(), image_media_id: image ? image.id : null },
+      });
       bump(); toast("게시했습니다"); onClose(); nav(`/p/${id}`);
     } catch (err) { toast(err.detail, "err"); setBusy(false); }
   };
@@ -853,6 +1072,7 @@ function PostModal({ onClose }) {
       </div>
       <textarea rows="6" value=${body} onInput=${(e) => setBody(e.target.value)} maxlength="2000"
         placeholder="오늘 지킨 루틴, 느낀 점, 궁금한 것…" autofocus></textarea>
+      <${ImageUpload} kind="post" value=${image} onChange=${setImage} label="사진 추가" />
       <button disabled=${!body.trim() || busy}>게시</button>
     </form>
   <//>`;
@@ -956,6 +1176,7 @@ function App() {
   else if (route === "/notifications") { view = html`<${NotificationsView} />`; title = "알림"; }
   else if (route === "/me") { view = html`<${MeView} />`; title = "나"; }
   else if (route === "/search") { view = html`<${SearchView} />`; title = "검색"; back = () => history.back(); }
+  else if (route === "/admin") { view = html`<${AdminReportsView} />`; title = "신고 관리"; back = () => nav("/settings"); }
   else if (route === "/settings") { view = html`<${SettingsView} />`; title = "설정"; back = () => nav("/me"); }
   else if (m) { view = html`<${PostView} id=${m[1]} />`; title = "글"; back = () => history.back(); }
   else if (up) {

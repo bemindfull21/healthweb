@@ -11,8 +11,11 @@
 from __future__ import annotations
 
 import datetime as dt
+import io
 import os
+import pathlib
 import re
+import secrets
 import time
 from collections import defaultdict
 from typing import Optional
@@ -20,9 +23,11 @@ from typing import Optional
 import bcrypt
 import jwt
 import oracledb
-from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile
+from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
+from PIL import Image, ImageOps
 from pydantic import BaseModel
 
 LOGIN_ID_RE = re.compile(r"^[a-z0-9]{3,20}$")
@@ -31,6 +36,16 @@ JWT_TTL = dt.timedelta(days=7)
 MIN_WEIGHT, MAX_WEIGHT = 20.0, 300.0
 POST_KINDS = {"log", "routine", "reflection", "question"}
 PRIVACY = {"private", "trend", "public"}
+
+MEDIA_DIR = pathlib.Path(os.environ.get("MEDIA_DIR", "media"))
+MEDIA_BASE_URL = os.environ.get("MEDIA_BASE_URL", "/media").rstrip("/")
+OWNER_LOGIN_ID = os.environ.get("OWNER_LOGIN_ID", "").strip().lower()
+IMG_MIME = {"image/jpeg", "image/png", "image/webp"}
+MAX_UPLOAD = 8 * 1024 * 1024
+MEDIA_QUOTA = 200
+DISPLAY_MAX = 1280
+THUMB_MAX = 320
+Image.MAX_IMAGE_PIXELS = 40_000_000  # 디컴프레션 폭탄 방어
 
 pool: oracledb.ConnectionPool | None = None
 app = FastAPI(title="health-web API")
@@ -41,6 +56,9 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PATCH", "DELETE"],
     allow_headers=["*"],
 )
+
+MEDIA_DIR.mkdir(parents=True, exist_ok=True)
+_MEDIA_ROOT = MEDIA_DIR.resolve()
 
 
 # ---------- DB ----------
@@ -143,8 +161,12 @@ def current_user(authorization: str = Header(default="")) -> dict:
     except jwt.PyJWTError:
         raise HTTPException(401, "세션이 만료되었습니다. 다시 로그인해 주세요")
     u = q1(
-        "select login_id, name, bio, link, location, pinned_post_id, "
-        "target_weight, weight_privacy from healthweb.app_user where login_id = :lid",
+        "select au.login_id, au.name, au.bio, au.link, au.location, au.pinned_post_id, "
+        "au.target_weight, au.weight_privacy, au.avatar_media_id, "
+        "m.path avatar_path, m.thumb_path avatar_thumb "
+        "from healthweb.app_user au "
+        "left join healthweb.media m on m.id = au.avatar_media_id "
+        "where au.login_id = :lid",
         lid=payload.get("sub"),
     )
     if u is None:
@@ -246,6 +268,94 @@ BLOCK_FILTER = """
 """
 
 
+# ---------- 이미지 ----------
+
+def _process_image(raw: bytes, kind: str) -> dict:
+    """Pillow 로 검증·EXIF 제거·재인코딩. 표시용 + 썸네일 JPEG 2장 저장하고 메타 반환.
+    동기 함수 — run_in_threadpool 로 호출."""
+    try:
+        Image.open(io.BytesIO(raw)).verify()  # 손상·폭탄 1차 검사
+        im = Image.open(io.BytesIO(raw))
+        im = ImageOps.exif_transpose(im)      # 회전 반영 후 EXIF 폐기
+        im = im.convert("RGB")
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(400, "이미지를 읽을 수 없습니다")
+
+    if kind == "avatar":
+        disp = ImageOps.fit(im, (400, 400), Image.LANCZOS)
+    else:
+        disp = im.copy()
+        disp.thumbnail((DISPLAY_MAX, DISPLAY_MAX), Image.LANCZOS)
+    thumb = im.copy()
+    thumb.thumbnail((THUMB_MAX, THUMB_MAX), Image.LANCZOS)
+
+    token = secrets.token_hex(16)
+    key, tkey = f"{token[:2]}/{token}.jpg", f"{token[:2]}/{token}_t.jpg"
+    (MEDIA_DIR / key).parent.mkdir(parents=True, exist_ok=True)
+    b = io.BytesIO()
+    disp.save(b, "JPEG", quality=82, optimize=True)
+    (MEDIA_DIR / key).write_bytes(b.getvalue())
+    bt = io.BytesIO()
+    thumb.save(bt, "JPEG", quality=78, optimize=True)
+    (MEDIA_DIR / tkey).write_bytes(bt.getvalue())
+    return {"path": key, "thumb_path": tkey, "width": disp.width, "height": disp.height,
+            "bytes": len(b.getvalue())}
+
+
+def _media_url(path: Optional[str], thumb: Optional[str] = None) -> Optional[dict]:
+    if not path:
+        return None
+    return {"url": f"{MEDIA_BASE_URL}/{path}",
+            "thumb_url": f"{MEDIA_BASE_URL}/{thumb or path}"}
+
+
+def _unlink_media(path: Optional[str], thumb: Optional[str]) -> None:
+    for p in (path, thumb):
+        if p:
+            try:
+                (MEDIA_DIR / p).unlink(missing_ok=True)
+            except OSError:
+                pass
+
+
+def _gc_media(mid: Optional[int]) -> None:
+    """어디에서도 참조하지 않으면 media 행 + 파일 삭제."""
+    if not mid:
+        return
+    if q1(
+        "select 1 x from healthweb.app_user where avatar_media_id = :i "
+        "union all select 1 from healthweb.weight_entry where photo_media_id = :i "
+        "union all select 1 from healthweb.post where image_media_id = :i",
+        i=mid,
+    ):
+        return
+    m = q1("select path, thumb_path from healthweb.media where id = :i", i=mid)
+    if m:
+        dml("delete from healthweb.media where id = :i", i=mid)
+        _unlink_media(m["path"], m["thumb_path"])
+
+
+def _own_media(mid: Optional[int], login_id: str, *kinds: str) -> Optional[int]:
+    """mid 가 login_id 소유이고 kind 가 맞으면 그대로, 0 이하/None 이면 None, 아니면 400."""
+    if mid is None or mid <= 0:
+        return None
+    row = q1(
+        "select 1 x from healthweb.media where id = :i and login_id = :v and kind in "
+        "(" + ", ".join(f"'{k}'" for k in kinds) + ")",
+        i=mid, v=login_id,
+    )
+    if row is None:
+        raise HTTPException(400, "잘못된 이미지입니다")
+    return mid
+
+
+def require_owner(u: dict) -> None:
+    if not OWNER_LOGIN_ID or u["login_id"] != OWNER_LOGIN_ID:
+        raise HTTPException(403, "권한이 없습니다")
+
+
 # ---------- 모델 ----------
 
 class SignupIn(BaseModel):
@@ -272,6 +382,7 @@ class MePatch(BaseModel):
     link: Optional[str] = None
     location: Optional[str] = None
     pinned_post_id: Optional[int] = None  # 0 또는 음수 → 고정 해제
+    avatar_media_id: Optional[int] = None  # 0 또는 음수 → 아바타 제거
     target_weight: Optional[float] = None
     weight_privacy: Optional[str] = None
     current_password: Optional[str] = None
@@ -283,12 +394,24 @@ class WeightIn(BaseModel):
     logged_at: Optional[str] = None
     note: Optional[str] = None
     share: bool = False
+    photo_media_id: Optional[int] = None  # share=True 일 때만
 
 
 class PostIn(BaseModel):
     kind: str
     body: str
     weight_entry_id: Optional[int] = None
+    image_media_id: Optional[int] = None
+
+
+class ReportIn(BaseModel):
+    target_kind: str
+    target_id: str
+    reason: Optional[str] = None
+
+
+class ResolveIn(BaseModel):
+    action: Optional[str] = None  # None/'none' | 'delete_post' | 'delete_comment'
 
 
 class CommentIn(BaseModel):
@@ -398,16 +521,23 @@ def reset(body: ResetIn, request: Request) -> dict:
 
 @app.get("/auth/me")
 def me(u: dict = Depends(current_user)) -> dict:
-    return {
+    out = {
         "login_id": u["login_id"],
         "name": u["name"],
         "bio": u["bio"],
         "link": u["link"],
         "location": u["location"],
         "pinned_post_id": u["pinned_post_id"],
+        "avatar": _media_url(u["avatar_path"], u["avatar_thumb"]),
         "target_weight": float(u["target_weight"]) if u["target_weight"] is not None else None,
         "weight_privacy": u["weight_privacy"],
     }
+    if OWNER_LOGIN_ID and u["login_id"] == OWNER_LOGIN_ID:
+        out["is_owner"] = True
+        out["open_reports"] = q1(
+            "select count(*) c from healthweb.report where status = 'open'"
+        )["c"]
+    return out
 
 
 @app.patch("/auth/me")
@@ -436,6 +566,12 @@ def patch_me(body: MePatch, u: dict = Depends(current_user)) -> dict:
             if own is None:
                 raise HTTPException(400, "본인 글만 고정할 수 있습니다")
             sets.append("pinned_post_id = :pp"); binds["pp"] = body.pinned_post_id
+    if body.avatar_media_id is not None:
+        if body.avatar_media_id <= 0:
+            sets.append("avatar_media_id = null")
+        else:
+            _own_media(body.avatar_media_id, u["login_id"], "avatar")
+            sets.append("avatar_media_id = :am"); binds["am"] = body.avatar_media_id
     if body.target_weight is not None:
         if not (MIN_WEIGHT <= body.target_weight <= MAX_WEIGHT):
             raise HTTPException(400, "목표 몸무게가 범위를 벗어났습니다")
@@ -457,17 +593,89 @@ def patch_me(body: MePatch, u: dict = Depends(current_user)) -> dict:
     return {"ok": True}
 
 
+# ---------- 이미지 업로드 ----------
+
+@app.post("/media")
+async def upload_media(
+    request: Request,
+    file: UploadFile = File(...),
+    kind: str = Form(...),
+    u: dict = Depends(current_user),
+) -> dict:
+    if kind not in ("avatar", "progress", "post"):
+        raise HTTPException(400, "잘못된 이미지 종류")
+    if (file.content_type or "").lower() not in IMG_MIME:
+        raise HTTPException(400, "JPEG · PNG · WebP 이미지만 올릴 수 있습니다")
+    if not rate_ok(f"media:{u['login_id']}", 20, 3600):
+        raise HTTPException(429, "업로드가 많습니다. 잠시 후 다시 시도해 주세요")
+    raw = await file.read(MAX_UPLOAD + 1)
+    if not raw:
+        raise HTTPException(400, "빈 파일입니다")
+    if len(raw) > MAX_UPLOAD:
+        raise HTTPException(413, "이미지는 8MB 이하여야 합니다")
+    used = q1("select count(*) c from healthweb.media where login_id = :v", v=u["login_id"])["c"]
+    if used >= MEDIA_QUOTA:
+        raise HTTPException(429, "이미지 업로드 한도에 도달했습니다")
+
+    meta = await run_in_threadpool(_process_image, raw, kind)
+    mid = insert_id(
+        "insert into healthweb.media (login_id, kind, path, thumb_path, width, height, bytes) "
+        "values (:l, :k, :p, :t, :w, :h, :b) returning id into :new_id",
+        l=u["login_id"], k=kind, p=meta["path"], t=meta["thumb_path"],
+        w=meta["width"], h=meta["height"], b=meta["bytes"],
+    )
+    return {"id": mid, "width": meta["width"], "height": meta["height"],
+            **_media_url(meta["path"], meta["thumb_path"])}
+
+
+@app.delete("/media/{mid}")
+def delete_media(mid: int, u: dict = Depends(current_user)) -> dict:
+    m = q1(
+        "select path, thumb_path from healthweb.media where id = :i and login_id = :v",
+        i=mid, v=u["login_id"],
+    )
+    if m is None:
+        raise HTTPException(404, "없는 이미지입니다")
+    if q1(
+        "select 1 x from healthweb.app_user where avatar_media_id = :i "
+        "union all select 1 from healthweb.weight_entry where photo_media_id = :i "
+        "union all select 1 from healthweb.post where image_media_id = :i",
+        i=mid,
+    ):
+        raise HTTPException(400, "사용 중인 이미지입니다. 글·기록에서 먼저 빼주세요")
+    dml("delete from healthweb.media where id = :i", i=mid)
+    _unlink_media(m["path"], m["thumb_path"])
+    return {"ok": True}
+
+
+@app.get("/media/{key:path}")
+def serve_media(key: str) -> FileResponse:
+    if ".." in key or key.startswith(("/", "\\")):
+        raise HTTPException(404, "없는 파일입니다")
+    fp = (MEDIA_DIR / key).resolve()
+    if not str(fp).startswith(str(_MEDIA_ROOT)) or not fp.is_file():
+        raise HTTPException(404, "없는 파일입니다")
+    return FileResponse(
+        fp, media_type="image/jpeg",
+        headers={"Cache-Control": "public, max-age=31536000, immutable"},
+    )
+
+
 # ---------- 몸무게 ----------
 
 @app.get("/weights")
 def list_weights(u: dict = Depends(current_user)) -> dict:
     rows = qall(
-        "select id, to_char(logged_at,'YYYY-MM-DD') d, to_char(logged_at,'HH24:MI:SS') t, "
-        "weight, note from healthweb.weight_entry where login_id = :v order by logged_at",
+        "select we.id, to_char(we.logged_at,'YYYY-MM-DD') d, to_char(we.logged_at,'HH24:MI:SS') t, "
+        "we.weight, we.note, m.path img, m.thumb_path img_t "
+        "from healthweb.weight_entry we "
+        "left join healthweb.media m on m.id = we.photo_media_id "
+        "where we.login_id = :v order by we.logged_at",
         v=u["login_id"],
     )
     entries = [
-        {"id": r["id"], "date": r["d"], "time": r["t"], "weight": float(r["weight"]), "note": r["note"]}
+        {"id": r["id"], "date": r["d"], "time": r["t"], "weight": float(r["weight"]),
+         "note": r["note"], "photo": _media_url(r["img"], r["img_t"])}
         for r in rows
     ]
     return {"updated_at": iso_z(), "count": len(entries), "entries": entries}
@@ -481,18 +689,21 @@ def add_weight(body: WeightIn, u: dict = Depends(current_user)) -> dict:
         raise HTTPException(429, "요청이 많습니다")
     logged = parse_dt(body.logged_at)
     note = (body.note or "").strip()[:500] or None
+    photo = _own_media(body.photo_media_id, u["login_id"], "progress", "post")
+    if photo and not body.share:
+        raise HTTPException(400, "사진은 글로 공유할 때만 첨부할 수 있습니다")
 
     entry_id = insert_id(
-        "insert into healthweb.weight_entry (login_id, logged_at, weight, note) "
-        "values (:l, :d, :w, :n) returning id into :new_id",
-        l=u["login_id"], d=logged, w=body.weight, n=note,
+        "insert into healthweb.weight_entry (login_id, logged_at, weight, note, photo_media_id) "
+        "values (:l, :d, :w, :n, :m) returning id into :new_id",
+        l=u["login_id"], d=logged, w=body.weight, n=note, m=photo,
     )
     post_id = None
     if body.share:
         post_id = insert_id(
-            "insert into healthweb.post (login_id, kind, body, weight_entry_id) "
-            "values (:l, 'log', :b, :e) returning id into :new_id",
-            l=u["login_id"], b=note or "오늘도 기록했어요.", e=entry_id,
+            "insert into healthweb.post (login_id, kind, body, weight_entry_id, image_media_id) "
+            "values (:l, 'log', :b, :e, :m) returning id into :new_id",
+            l=u["login_id"], b=note or "오늘도 기록했어요.", e=entry_id, m=photo,
         )
     return {"id": entry_id, "post_id": post_id}
 
@@ -505,8 +716,10 @@ def del_weight(entry_id: int, u: dict = Depends(current_user)) -> dict:
     )
     if owned is None:
         raise HTTPException(404, "기록을 찾을 수 없습니다")
+    photo = q1("select photo_media_id from healthweb.weight_entry where id = :i", i=entry_id)
     dml("update healthweb.post set weight_entry_id = null where weight_entry_id = :i", i=entry_id)
     dml("delete from healthweb.weight_entry where id = :i", i=entry_id)
+    _gc_media(photo["photo_media_id"] if photo else None)
     return {"ok": True}
 
 
@@ -524,6 +737,8 @@ def _post_row(r: dict) -> dict:
         "i_encouraged": bool(r.get("i_enc")),
         "mine": bool(r.get("mine")),
         "pinned": bool(r.get("pinned")),
+        "image": _media_url(r.get("img_path"), r.get("img_thumb")),
+        "avatar": _media_url(r.get("av_path"), r.get("av_thumb")),
     }
     if r["kind"] == "log" and r.get("weight") is not None and r.get("weight_privacy") == "public":
         out["weight"] = float(r["weight"])
@@ -533,6 +748,8 @@ def _post_row(r: dict) -> dict:
 FEED_SQL = """
     select p.id, au.name, p.kind, p.body, p.created_at,
            we.weight, au.weight_privacy,
+           pm.path img_path, pm.thumb_path img_thumb,
+           am.path av_path, am.thumb_path av_thumb,
            case when p.login_id = :viewer then 1 else 0 end mine,
            case when au.pinned_post_id = p.id then 1 else 0 end pinned,
            (select count(*) from healthweb.encouragement e where e.post_id = p.id) enc_count,
@@ -541,6 +758,8 @@ FEED_SQL = """
     from healthweb.post p
     join healthweb.app_user au on au.login_id = p.login_id
     left join healthweb.weight_entry we on we.id = p.weight_entry_id
+    left join healthweb.media pm on pm.id = p.image_media_id
+    left join healthweb.media am on am.id = au.avatar_media_id
     where {block}
     {and_where}
     order by p.id desc
@@ -587,10 +806,11 @@ def create_post(body: PostIn, u: dict = Depends(current_user)) -> dict:
         )
         if owned is None:
             eid = None
+    iid = _own_media(body.image_media_id, u["login_id"], "post", "progress")
     pid = insert_id(
-        "insert into healthweb.post (login_id, kind, body, weight_entry_id) "
-        "values (:l, :k, :b, :e) returning id into :new_id",
-        l=u["login_id"], k=body.kind, b=text, e=eid,
+        "insert into healthweb.post (login_id, kind, body, weight_entry_id, image_media_id) "
+        "values (:l, :k, :b, :e, :m) returning id into :new_id",
+        l=u["login_id"], k=body.kind, b=text, e=eid, m=iid,
     )
     return {"id": pid}
 
@@ -602,15 +822,17 @@ def get_post(post_id: int, u: dict = Depends(current_user)) -> dict:
         raise HTTPException(404, "글을 찾을 수 없습니다")
     post = _post_row(rows[0])
     comments = qall(
-        "select c.id, au.name, c.body, c.created_at, "
+        "select c.id, au.name, c.body, c.created_at, m.thumb_path av_thumb, m.path av_path, "
         "case when c.login_id = :viewer then 1 else 0 end mine "
         "from healthweb.post_comment c join healthweb.app_user au on au.login_id = c.login_id "
+        "left join healthweb.media m on m.id = au.avatar_media_id "
         "where c.post_id = :p order by c.id",
         p=post_id, viewer=u["login_id"],
     )
     post["comments"] = [
         {"id": c["id"], "name": c["name"], "body": c["body"],
-         "created_at": iso_z(c["created_at"]), "mine": bool(c["mine"])}
+         "created_at": iso_z(c["created_at"]), "mine": bool(c["mine"]),
+         "avatar": _media_url(c["av_path"], c["av_thumb"])}
         for c in comments
     ]
     return post
@@ -663,16 +885,23 @@ def add_comment(post_id: int, body: CommentIn, u: dict = Depends(current_user)) 
     return {"id": cid}
 
 
-@app.delete("/posts/{post_id}")
-def delete_post(post_id: int, u: dict = Depends(current_user)) -> dict:
-    owned = q1("select 1 as x from healthweb.post where id = :p and login_id = :l", p=post_id, l=u["login_id"])
-    if owned is None:
-        raise HTTPException(404, "글을 찾을 수 없습니다")
+def _purge_post(post_id: int) -> None:
+    """글과 딸린 행(댓글·응원·알림·고정·이미지) 정리. 소유권 확인은 호출자 책임."""
+    img = q1("select image_media_id from healthweb.post where id = :p", p=post_id)
     dml("delete from healthweb.post_comment where post_id = :p", p=post_id)
     dml("delete from healthweb.encouragement where post_id = :p", p=post_id)
     dml("delete from healthweb.notification where post_id = :p", p=post_id)
     dml("update healthweb.app_user set pinned_post_id = null where pinned_post_id = :p", p=post_id)
     dml("delete from healthweb.post where id = :p", p=post_id)
+    _gc_media(img["image_media_id"] if img else None)  # weight_entry 가 아직 참조하면 남김
+
+
+@app.delete("/posts/{post_id}")
+def delete_post(post_id: int, u: dict = Depends(current_user)) -> dict:
+    owned = q1("select 1 as x from healthweb.post where id = :p and login_id = :l", p=post_id, l=u["login_id"])
+    if owned is None:
+        raise HTTPException(404, "글을 찾을 수 없습니다")
+    _purge_post(post_id)
     return {"ok": True}
 
 
@@ -698,9 +927,12 @@ def _streak(login_id: str) -> int:
 @app.get("/u/{handle}")
 def profile(handle: str, u: dict = Depends(current_user)) -> dict:
     p = q1(
-        "select login_id, name, bio, link, location, pinned_post_id, "
-        "target_weight, weight_privacy, created_at "
-        "from healthweb.app_user where lower(name) = lower(:h)",
+        "select au.login_id, au.name, au.bio, au.link, au.location, au.pinned_post_id, "
+        "au.target_weight, au.weight_privacy, au.created_at, "
+        "m.path av_path, m.thumb_path av_thumb "
+        "from healthweb.app_user au "
+        "left join healthweb.media m on m.id = au.avatar_media_id "
+        "where lower(au.name) = lower(:h)",
         h=" ".join(handle.split()),
     )
     if p is None:
@@ -722,6 +954,7 @@ def profile(handle: str, u: dict = Depends(current_user)) -> dict:
         "bio": p["bio"],
         "link": p["link"],
         "location": p["location"],
+        "avatar": _media_url(p["av_path"], p["av_thumb"]),
         "created_at": iso_z(p["created_at"]),
         "weight_privacy": p["weight_privacy"],
         "streak": _streak(pl),
@@ -872,10 +1105,11 @@ def search(q: str, request: Request, u: dict = Depends(current_user)) -> dict:
     arg = like_arg(term)
 
     users = qall(
-        "select au.name, au.bio, "
+        "select au.name, au.bio, m.path av_path, m.thumb_path av_thumb, "
         "case when exists (select 1 from healthweb.follow f "
         "  where f.follower = :me and f.followee = au.login_id) then 1 else 0 end i_follow "
         "from healthweb.app_user au "
+        "left join healthweb.media m on m.id = au.avatar_media_id "
         "where lower(au.name) like :arg escape '\\' "
         "and au.login_id not in ("
         "  select blocked from healthweb.user_block where blocker = :me "
@@ -899,7 +1133,9 @@ def search(q: str, request: Request, u: dict = Depends(current_user)) -> dict:
     return {
         "q": term,
         "users": [
-            {"name": r["name"], "bio": r["bio"], "i_follow": bool(r["i_follow"])} for r in users
+            {"name": r["name"], "bio": r["bio"], "i_follow": bool(r["i_follow"]),
+             "avatar": _media_url(r["av_path"], r["av_thumb"])}
+            for r in users
         ],
         "challenges": [
             {"id": r["id"], "title": r["title"], "member_count": r["member_count"],
@@ -1137,5 +1373,120 @@ def mark_read(u: dict = Depends(current_user)) -> dict:
         "update healthweb.notification set read_at = systimestamp "
         "where login_id = :me and read_at is null",
         me=u["login_id"],
+    )
+    return {"ok": True}
+
+
+# ---------- 신고 · 모더레이션 ----------
+
+@app.post("/reports")
+def create_report(body: ReportIn, request: Request, u: dict = Depends(current_user)) -> dict:
+    if body.target_kind not in ("post", "comment", "user"):
+        raise HTTPException(400, "잘못된 신고 대상")
+    tid = (body.target_id or "").strip()[:40]
+    if not tid:
+        raise HTTPException(400, "신고 대상이 없습니다")
+    if not rate_ok(f"report:{u['login_id']}", 10, 3600):
+        raise HTTPException(429, "신고가 많습니다. 잠시 후 다시 시도해 주세요")
+
+    if body.target_kind == "post":
+        exists = q1("select 1 x from healthweb.post where id = :i", i=int(tid)) if tid.isdigit() else None
+    elif body.target_kind == "comment":
+        exists = q1("select 1 x from healthweb.post_comment where id = :i", i=int(tid)) if tid.isdigit() else None
+    else:
+        # user 신고는 이름으로 받아 login_id 로 저장
+        row = q1(
+            "select login_id from healthweb.app_user where lower(name) = lower(:h)",
+            h=" ".join(tid.split()),
+        )
+        exists = row
+        if row is not None:
+            tid = row["login_id"]
+            if tid == u["login_id"]:
+                raise HTTPException(400, "자기 자신은 신고할 수 없습니다")
+    if exists is None:
+        raise HTTPException(404, "신고 대상을 찾을 수 없습니다")
+
+    dup = q1(
+        "select 1 x from healthweb.report where reporter = :r and target_kind = :k "
+        "and target_id = :t and status = 'open'",
+        r=u["login_id"], k=body.target_kind, t=tid,
+    )
+    if dup is None:
+        dml(
+            "insert into healthweb.report (reporter, target_kind, target_id, reason) "
+            "values (:r, :k, :t, :rs)",
+            r=u["login_id"], k=body.target_kind, t=tid,
+            rs=(body.reason or "").strip()[:300] or None,
+        )
+    return {"ok": True}
+
+
+@app.get("/admin/reports")
+def admin_reports(u: dict = Depends(current_user), status: str = "open") -> dict:
+    require_owner(u)
+    if status not in ("open", "closed"):
+        status = "open"
+    rows = qall(
+        "select r.id, au.name reporter_name, r.target_kind, r.target_id, r.reason, "
+        "r.status, r.created_at from healthweb.report r "
+        "join healthweb.app_user au on au.login_id = r.reporter "
+        "where r.status = :s order by r.id desc fetch first 100 rows only",
+        s=status,
+    )
+    out = []
+    for r in rows:
+        tid, tk = r["target_id"], r["target_kind"]
+        ctx: dict
+        if tk == "post" and tid.isdigit():
+            p = q1(
+                "select p.id, p.body, p.kind, au.name from healthweb.post p "
+                "join healthweb.app_user au on au.login_id = p.login_id where p.id = :i",
+                i=int(tid),
+            )
+            ctx = {"gone": True} if p is None else {
+                "post_id": p["id"], "author": p["name"], "kind": p["kind"],
+                "excerpt": (p["body"] or "")[:160],
+            }
+        elif tk == "comment" and tid.isdigit():
+            cc = q1(
+                "select c.id, c.body, c.post_id, au.name from healthweb.post_comment c "
+                "join healthweb.app_user au on au.login_id = c.login_id where c.id = :i",
+                i=int(tid),
+            )
+            ctx = {"gone": True} if cc is None else {
+                "comment_id": cc["id"], "post_id": cc["post_id"], "author": cc["name"],
+                "excerpt": (cc["body"] or "")[:160],
+            }
+        else:
+            uu = q1("select name, bio from healthweb.app_user where login_id = :i", i=tid)
+            ctx = {"gone": True} if uu is None else {"name": uu["name"], "bio": uu["bio"]}
+        out.append({
+            "id": r["id"], "reporter_name": r["reporter_name"], "target_kind": tk,
+            "target_id": tid, "reason": r["reason"], "status": r["status"],
+            "created_at": iso_z(r["created_at"]), "context": ctx,
+        })
+    return {"items": out}
+
+
+@app.post("/admin/reports/{rid}/resolve")
+def admin_resolve(rid: int, body: ResolveIn, u: dict = Depends(current_user)) -> dict:
+    require_owner(u)
+    r = q1(
+        "select target_kind, target_id from healthweb.report where id = :i and status = 'open'",
+        i=rid,
+    )
+    if r is None:
+        raise HTTPException(404, "없는 신고입니다")
+    tk, tid = r["target_kind"], r["target_id"]
+    if body.action == "delete_post" and tk == "post" and tid.isdigit():
+        if q1("select 1 x from healthweb.post where id = :i", i=int(tid)):
+            _purge_post(int(tid))
+    elif body.action == "delete_comment" and tk == "comment" and tid.isdigit():
+        dml("delete from healthweb.post_comment where id = :i", i=int(tid))
+    dml(
+        "update healthweb.report set status = 'closed' "
+        "where target_kind = :k and target_id = :t and status = 'open'",
+        k=tk, t=tid,
     )
     return {"ok": True}

@@ -3,6 +3,7 @@
 wallet/
 wallet.zip
 wallet_b64.txt
+api/media/
 __pycache__/
 *.pyc
 .venv/
