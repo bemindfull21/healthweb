@@ -451,7 +451,7 @@ function FeedView() {
 
 // ---------- 뷰: 나 ----------
 function MeView() {
-  const { me, bumpKey, openWeight, toast } = useStore();
+  const { me, nav, bumpKey, openWeight, toast } = useStore();
   const [data, setData] = useState(null);
   const [state, setState] = useState("loading");
   const [zoom, setZoom] = useState(null);
@@ -477,6 +477,15 @@ function MeView() {
   const first = entries[0];
 
   return html`<div class="view me">
+    <div class="me-head">
+      <${Avatar} src=${me && me.avatar && me.avatar.url} name=${me && me.name} size="lg" />
+      <div class="me-head-id">
+        <div class="me-name">${me ? me.name : ""}</div>
+        ${me && me.name && html`<button class="link-btn"
+          onClick=${() => nav(`/u/${encodeURIComponent(me.name)}`)}>내 프로필 보기</button>`}
+      </div>
+      <button class="ghost" onClick=${() => nav("/settings")}>설정</button>
+    </div>
     <div class="stats">
       <div class="stat"><div class="k">최근 몸무게</div><div class="v">${last ? fmtKg(last.weight) : "–"} <small>kg</small></div></div>
       ${target && last && html`<div class="stat"><div class="k">목표까지</div>
