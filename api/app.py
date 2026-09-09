@@ -12,11 +12,16 @@ from __future__ import annotations
 
 import datetime as dt
 import io
+import json
 import os
 import pathlib
 import re
 import secrets
+import threading
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
 from collections import defaultdict
 from typing import Optional
 
@@ -46,6 +51,13 @@ MEDIA_QUOTA = 200
 DISPLAY_MAX = 1280
 THUMB_MAX = 320
 Image.MAX_IMAGE_PIXELS = 40_000_000  # 디컴프레션 폭탄 방어
+
+# 텔레그램 알림 (옵트인)
+TG_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+TG_BOT_USERNAME = os.environ.get("TELEGRAM_BOT_USERNAME", "health_trainer21_bot").strip().lstrip("@")
+WEB_APP_URL = os.environ.get("WEB_APP_URL", "https://bemindfull21.github.io/healthweb").rstrip("/")
+INTERNAL_KEY = os.environ.get("INTERNAL_KEY", "").strip()
+CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"  # 헷갈리는 글자 제외
 
 pool: oracledb.ConnectionPool | None = None
 app = FastAPI(title="health-web API")
@@ -162,7 +174,7 @@ def current_user(authorization: str = Header(default="")) -> dict:
         raise HTTPException(401, "세션이 만료되었습니다. 다시 로그인해 주세요")
     u = q1(
         "select au.login_id, au.name, au.bio, au.link, au.location, au.pinned_post_id, "
-        "au.target_weight, au.weight_privacy, au.avatar_media_id, "
+        "au.target_weight, au.weight_privacy, au.avatar_media_id, au.tg_chat_id, "
         "m.path avatar_path, m.thumb_path avatar_thumb "
         "from healthweb.app_user au "
         "left join healthweb.media m on m.id = au.avatar_media_id "
@@ -210,6 +222,11 @@ def parse_dt(s: Optional[str]) -> dt.datetime:
     return dt.datetime.now(dt.timezone.utc).replace(tzinfo=None, microsecond=0)
 
 
+def utcnow() -> dt.datetime:
+    """naive UTC — 세션 TZ에 안 흔들리는 timestamp 비교용."""
+    return dt.datetime.now(dt.timezone.utc).replace(tzinfo=None, microsecond=0)
+
+
 def iso_z(d: Optional[dt.datetime] = None) -> str:
     d = d or dt.datetime.now(dt.timezone.utc)
     if d.tzinfo:
@@ -217,8 +234,58 @@ def iso_z(d: Optional[dt.datetime] = None) -> str:
     return d.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+NOTIFY_VERB = {
+    "encourage": "님이 응원했어요",
+    "comment": "님이 댓글을 남겼어요",
+    "follow": "님이 팔로우했어요",
+}
+
+
+def _tg_api(method: str, payload: dict) -> tuple[int, dict]:
+    req = urllib.request.Request(
+        f"https://api.telegram.org/bot{TG_TOKEN}/{method}",
+        data=json.dumps(payload).encode(),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            return r.status, json.loads(r.read() or "{}")
+    except urllib.error.HTTPError as e:
+        try:
+            return e.code, json.loads(e.read() or "{}")
+        except Exception:
+            return e.code, {}
+    except Exception as e:
+        print(f"[tg] {method} 실패: {e!r}")
+        return 0, {}
+
+
+def _push_worker(chat_id: int, text: str) -> None:
+    status, _ = _tg_api("sendMessage", {"chat_id": chat_id, "text": text})
+    if status in (400, 403):  # 봇 차단됨 / 채팅 없음 → 연결 해제
+        try:
+            dml("update healthweb.app_user set tg_chat_id = null where tg_chat_id = :c", c=chat_id)
+        except Exception:
+            pass
+
+
+def _maybe_push(recipient: str, kind: str, actor: str, post_id: Optional[int]) -> None:
+    if not TG_TOKEN:
+        return
+    row = q1("select tg_chat_id from healthweb.app_user where login_id = :r", r=recipient)
+    if not row or row["tg_chat_id"] is None:
+        return
+    a = q1("select name from healthweb.app_user where login_id = :a", a=actor)
+    who = a["name"] if a else "누군가"
+    link = (f"{WEB_APP_URL}/p/{post_id}" if post_id
+            else f"{WEB_APP_URL}/u/{urllib.parse.quote(who)}")
+    text = f"{who}{NOTIFY_VERB.get(kind, '님이 반응했어요')}\n{link}"
+    threading.Thread(target=_push_worker, args=(int(row["tg_chat_id"]), text), daemon=True).start()
+
+
 def notify(recipient: str, kind: str, actor: str, post_id: Optional[int] = None) -> None:
-    """recipient에게 알림. 자기 행동은 건너뛴다."""
+    """recipient에게 알림. 자기 행동은 건너뛴다. tg 연결돼 있으면 텔레그램도 전송(비동기)."""
     if recipient == actor:
         return
     dml(
@@ -226,6 +293,7 @@ def notify(recipient: str, kind: str, actor: str, post_id: Optional[int] = None)
         "values (:r, :k, :a, :p)",
         r=recipient, k=kind, a=actor, p=post_id,
     )
+    _maybe_push(recipient, kind, actor, post_id)
 
 
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -414,6 +482,15 @@ class ResolveIn(BaseModel):
     action: Optional[str] = None  # None/'none' | 'delete_post' | 'delete_comment'
 
 
+class TgLinkIn(BaseModel):
+    code: str
+    chat_id: int
+
+
+class TgUnlinkIn(BaseModel):
+    chat_id: int
+
+
 class CommentIn(BaseModel):
     body: str
 
@@ -529,6 +606,7 @@ def me(u: dict = Depends(current_user)) -> dict:
         "location": u["location"],
         "pinned_post_id": u["pinned_post_id"],
         "avatar": _media_url(u["avatar_path"], u["avatar_thumb"]),
+        "telegram_linked": u["tg_chat_id"] is not None,
         "target_weight": float(u["target_weight"]) if u["target_weight"] is not None else None,
         "weight_privacy": u["weight_privacy"],
     }
@@ -1490,3 +1568,62 @@ def admin_resolve(rid: int, body: ResolveIn, u: dict = Depends(current_user)) ->
         k=tk, t=tid,
     )
     return {"ok": True}
+
+
+# ---------- 텔레그램 알림 (옵트인) ----------
+
+def _gen_code() -> str:
+    return "HW-" + "".join(secrets.choice(CODE_ALPHABET) for _ in range(6))
+
+
+def require_internal(x_internal_key: str = Header(default="")) -> None:
+    if not INTERNAL_KEY or x_internal_key != INTERNAL_KEY:
+        raise HTTPException(401, "unauthorized")
+
+
+@app.post("/push/telegram/code")
+def tg_code(request: Request, u: dict = Depends(current_user)) -> dict:
+    if not TG_TOKEN:
+        raise HTTPException(503, "텔레그램 알림이 아직 준비되지 않았습니다")
+    if not rate_ok(f"tgcode:{u['login_id']}", 5, 3600):
+        raise HTTPException(429, "요청이 많습니다. 잠시 후 다시 시도해 주세요")
+    dml("delete from healthweb.tg_link_code where login_id = :l", l=u["login_id"])
+    code = _gen_code()
+    dml(
+        "insert into healthweb.tg_link_code (code, login_id, created_at) values (:c, :l, :t)",
+        c=code, l=u["login_id"], t=utcnow(),
+    )
+    return {"code": code, "deep_link": f"https://t.me/{TG_BOT_USERNAME}?start={code}"}
+
+
+@app.get("/push/telegram")
+def tg_status(u: dict = Depends(current_user)) -> dict:
+    return {"linked": u["tg_chat_id"] is not None, "available": bool(TG_TOKEN)}
+
+
+@app.delete("/push/telegram")
+def tg_unlink(u: dict = Depends(current_user)) -> dict:
+    dml("update healthweb.app_user set tg_chat_id = null where login_id = :l", l=u["login_id"])
+    return {"ok": True}
+
+
+@app.post("/internal/telegram/link")
+def internal_tg_link(body: TgLinkIn, _: None = Depends(require_internal)) -> dict:
+    row = q1(
+        "select login_id from healthweb.tg_link_code where code = :c and created_at > :cut",
+        c=body.code.strip().upper(), cut=utcnow() - dt.timedelta(minutes=10),
+    )
+    if row is None:
+        raise HTTPException(404, "코드가 유효하지 않거나 만료되었습니다")
+    lid = row["login_id"]
+    dml("update healthweb.app_user set tg_chat_id = null where tg_chat_id = :cid", cid=body.chat_id)
+    dml("update healthweb.app_user set tg_chat_id = :cid where login_id = :l", cid=body.chat_id, l=lid)
+    dml("delete from healthweb.tg_link_code where login_id = :l", l=lid)
+    name = q1("select name from healthweb.app_user where login_id = :l", l=lid)["name"]
+    return {"ok": True, "name": name}
+
+
+@app.post("/internal/telegram/unlink")
+def internal_tg_unlink(body: TgUnlinkIn, _: None = Depends(require_internal)) -> dict:
+    n = dml("update healthweb.app_user set tg_chat_id = null where tg_chat_id = :cid", cid=body.chat_id)
+    return {"ok": True, "unlinked": n > 0}

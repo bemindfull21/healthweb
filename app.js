@@ -867,15 +867,44 @@ function SettingsView() {
   const [pw, setPw] = useState({ current_password: "", new_password: "" });
   const [avatar, setAvatar] = useState(null);
   const [meInfo, setMeInfo] = useState({});
+  const [tg, setTg] = useState({ linked: false, available: true, code: null, busy: false });
   useEffect(() => {
     api("/auth/me").then((d) => {
       setMe(d); setMeInfo(d);
       setAvatar(d.avatar || null);
+      setTg((t) => ({ ...t, linked: !!d.telegram_linked }));
       setF({ login_id: d.login_id || "", name: d.name || "", bio: d.bio || "",
         link: d.link || "", location: d.location || "",
         target_weight: d.target_weight ?? "", weight_privacy: d.weight_privacy || "private" });
     }).catch(() => {});
   }, []);
+
+  const refreshTg = useCallback(async () => {
+    try {
+      const s = await api("/push/telegram");
+      setTg((t) => ({ ...t, linked: s.linked, available: s.available, code: s.linked ? null : t.code }));
+    } catch {}
+  }, []);
+  useEffect(() => {
+    const on = () => document.visibilityState === "visible" && refreshTg();
+    document.addEventListener("visibilitychange", on);
+    return () => document.removeEventListener("visibilitychange", on);
+  }, [refreshTg]);
+  const startTg = async () => {
+    setTg((t) => ({ ...t, busy: true }));
+    try {
+      const c = await api("/push/telegram/code", { method: "POST" });
+      setTg((t) => ({ ...t, code: c, busy: false }));
+      window.open(c.deep_link, "_blank", "noopener");
+    } catch (e) { toast(e.detail, "err"); setTg((t) => ({ ...t, busy: false })); }
+  };
+  const unlinkTg = async () => {
+    try {
+      await api("/push/telegram", { method: "DELETE" });
+      setTg({ linked: false, available: true, code: null, busy: false });
+      toast("텔레그램 알림을 껐습니다");
+    } catch (e) { toast(e.detail, "err"); }
+  };
 
   const changeAvatar = async (media) => {
     setAvatar(media);
@@ -935,6 +964,23 @@ function SettingsView() {
         </select></label>
       <button onClick=${saveProfile}>저장</button>
     </div>
+
+    ${tg.available && html`<div class="panel">
+      <div class="panel-head"><span>텔레그램 알림</span></div>
+      ${tg.linked
+        ? html`
+          <p class="muted sm">연결됨 ✓ — 응원·댓글·팔로우 알림을 텔레그램으로도 받습니다.</p>
+          <button class="ghost" onClick=${unlinkTg}>연결 해제</button>`
+        : tg.code
+          ? html`
+            <p class="muted sm">텔레그램 봇 대화창에서 <b>시작</b>을 누르면 연결됩니다.</p>
+            <p class="muted sm">연결 코드: <span class="mono">${tg.code.code}</span> <span class="hint">(10분 유효)</span></p>
+            <a class="cta" href=${tg.code.deep_link} target="_blank" rel="noopener">텔레그램 봇 열기</a>
+            <button class="ghost" onClick=${refreshTg}>연결됐는지 확인</button>`
+          : html`
+            <p class="muted sm">앱을 열지 않아도 알림을 받고 싶다면 텔레그램을 연결하세요. (선택)</p>
+            <button disabled=${tg.busy} onClick=${startTg}>${tg.busy ? "준비 중…" : "텔레그램으로 알림 받기"}</button>`}
+    </div>`}
 
     <div class="panel">
       <div class="panel-head"><span>비밀번호 변경</span></div>

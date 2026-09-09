@@ -226,7 +226,10 @@ td.q { white-space: normal; color: var(--muted); font-size: .84rem; min-width: 1
 /* ============ 설정 ============ */
 .settings .panel { display: grid; gap: 0; }
 .settings .panel button { margin-top: 12px; justify-self: start; }
+.settings .panel p { margin: 0 0 6px; }
+.settings .panel .cta { margin: 10px 0 0; }
 .logout { width: 100%; background: transparent; color: var(--error); border: 1px solid var(--border); margin-top: 6px; }
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-weight: 700; color: var(--text); }
 
 /* ============ 모달 · 시트 · 토스트 ============ */
 .modal-back {

@@ -46,12 +46,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | 공개 (P3a) | `GET /c/:id` — **로그인 불필요**. 챌린지 공개 정보 + `member_count`·`active_this_week`·`sample_members` |
 | 이미지 (P3b) | `POST /media` (multipart: file·kind∈{avatar,progress,post}) → Pillow 재인코딩·썸네일·`{id,url,thumb_url,w,h}` · `DELETE /media/:id` (미첨부만) · `GET /media/{key:path}` (파일 서빙, immutable 캐시) |
 | 신고 (P3b) | `POST /reports` (`{target_kind∈{post,comment,user},target_id,reason}`, user 는 이름으로) · `GET /admin/reports?status=` (오너 전용) · `POST /admin/reports/:id/resolve` (`{action: delete_post|delete_comment|none}`) |
+| 텔레그램 알림 (옵트인) | `POST /push/telegram/code` → `{code,deep_link}` (10분 · 일회용) · `GET/DELETE /push/telegram` · `POST /internal/telegram/{link,unlink}` (`X-Internal-Key`, 봇→API 로컬 호출) |
 
 - bcrypt · PyJWT(HS256, 7일). 회원가입 폼은 비밀번호 확인 필드 포함(프론트 검증). `login_id`는 API 응답의 공개 컨텍스트(피드/프로필/댓글)에 절대 안 나감 — `name`만.
 - **P3a 리치 프로필**: `PATCH /auth/me` 에 `link`(URL 정규화·검증) · `location` · `pinned_post_id`(0이하 = 해제, 본인 글만). `GET /u/:handle` 에 `link`·`location`·`post_count`·`challenge_count`·`pinned`(고정 글, `posts`에서 제외)·`trend_series`(public 한정, 스파크라인용).
 - **P3a 차단**: `user_block`(blocker·blocked). 양방향 차단 시 피드·`/search`·`/u/:handle`(→`{blocked_by_me}` 또는 404)·알림에서 상호 숨김. `FEED_SQL` 에 `BLOCK_FILTER` 상시 적용(`{and_where}` 로 리팩터). 차단 시 서로 팔로우 해제. `delete_post` 는 이제 notification·pinned 참조도 정리.
 - **P3b 이미지**: 파일 실체는 VM `MEDIA_DIR`, 메타는 `media` 테이블. `_process_image()` 가 Pillow 로 EXIF 제거·RGB 변환·리사이즈(표시 1280 / 아바타 400 정사각 / 썸네일 320) → JPEG 2장. 8MB·MIME(jpeg/png/webp)·유저당 200장 제한. `_own_media()` 로 첨부 시 소유·kind 검증. `_gc_media()` 가 글/기록 삭제 시 참조 없는 파일 정리. 아바타는 `PATCH /auth/me` `avatar_media_id`(0=제거), 글은 `POST /posts` `image_media_id`, 진행 사진은 `POST /weights` `photo_media_id`(**share=True 필수** — 비공개 사진 없음). `FEED_SQL`·`/u/:handle`·`GET /weights`·댓글·검색 응답에 이미지/아바타 URL 추가.
 - **P3b 신고**: `report`(reporter·target_kind·target_id·reason·status). 중복(같은 reporter+target open)은 API 에서 무시. `OWNER_LOGIN_ID` env 로 오너 판별 → `/auth/me` 에 `is_owner`·`open_reports`. `_purge_post()` 로 관리자 글 삭제 재사용.
+- **텔레그램 알림 (옵트인)**: 설정에서 `POST /push/telegram/code` → 딥링크(`t.me/<bot>?start=<코드>`). 봇이 `/start <코드>` 받으면 `update.effective_chat.id` + 코드로 `POST /internal/telegram/link` 호출 → `app_user.tg_chat_id` 저장. `notify()` 가 알림 행 넣은 뒤 `_maybe_push()` → 데몬 스레드로 `api.telegram.org/sendMessage`(fire-and-forget). 403/400 응답 시 `tg_chat_id` 자동 해제. `TELEGRAM_BOT_TOKEN` 없으면 전 기능 no-op(`/push/telegram` `available:false`). 코드 만료 비교는 `utcnow()`(naive UTC) — 세션 TZ 이슈 회피.
 - `weight_privacy`(`private`/`trend`/`public`): 프로필의 몸무게 노출 + `log` 글의 weight 표시 여부(`public`만).
 - 코드/시각: `parse_dt`는 사용자 벽시계 시각 그대로 저장(naive). `iso_z` 응답.
 - 전역 `@app.exception_handler(Exception)` → `{"detail": ...}` JSON 500.
@@ -76,13 +78,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 `report`(reporter·target_kind·target_id·reason·status). **MEDIA 도 예약어 아님(테이블명 그대로).**
 주의: `scratchpad/apply_sql.py` 는 `;` 분리 시 문장 앞 `--` 주석이 붙은 청크를 통째로 건너뜀 → 파일 중간 주석 있으면 문장별로 실행할 것.
 
+`sql/041_telegram_notify.sql` (**적용됨** — healthweb 유저): `app_user` +`tg_chat_id` · `tg_link_code`(code PK · login_id · created_at, TTL·1회용은 API 처리).
+
 `sql/011_migrate_owner_weights.sql` — 오너가 가입 후 `<LOGIN_ID>` 바꿔 실행 (구 텔레그램 이력 → weight_entry).
 
 ## VM 배포 (memo-agent)
 
 - `/opt/health-web-api/` : `healthweb-api.service`(uvicorn :8000) + `caddy.service`(`healthweb21.duckdns.org`).
-- `.env`: DB 자격증명 + `JWT_SECRET` + `ALLOW_ORIGIN=https://bemindfull21.github.io` + **`MEDIA_DIR=/opt/health-web-api/media` · `MEDIA_BASE_URL=https://healthweb21.duckdns.org/media` · `OWNER_LOGIN_ID=bemindfull21`**. (`INTERNAL_KEY`는 미사용)
+- `.env`: DB 자격증명 + `JWT_SECRET` + `ALLOW_ORIGIN=https://bemindfull21.github.io` + `MEDIA_DIR=/opt/health-web-api/media` · `MEDIA_BASE_URL=https://healthweb21.duckdns.org/media` · `OWNER_LOGIN_ID=bemindfull21` + **`INTERNAL_KEY`(봇과 공유, 텔레그램 링크 인증) · `TELEGRAM_BOT_TOKEN`(sendMessage) · `WEB_APP_URL=https://bemindfull21.github.io/healthweb` · `TELEGRAM_BOT_USERNAME=health_trainer21_bot`**.
 - 이미지는 FastAPI 가 `GET /media/*` 로 직접 서빙 (Caddy 는 전체 프록시, 별도 설정 없음). `MEDIA_DIR` 은 `.gitignore` + systemd `User=opc` 쓰기 가능. **주기적으로 OCI 로 tar 백업 권장** (DB 백업엔 없음).
+- `/internal/*` 는 Caddy 가 외부 404, 봇은 `127.0.0.1:8000` 직접 호출(우회) + `X-Internal-Key`.
 - 재배포: `scp api/app.py api/requirements.txt opc@168.107.89.8:/opt/health-web-api/` → `ssh ... 'cd /opt/health-web-api && ./venv/bin/pip install -r requirements.txt && sudo systemctl restart healthweb-api'` (Pillow 추가됨).
 
 ## 폐기됨
