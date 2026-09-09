@@ -193,7 +193,8 @@ function WeightChart({ entries, target }) {
       const cut = last.toISOString().slice(0, 10);
       rows = entries.filter((e) => e.date >= cut);
     }
-    const labels = rows.map((e) => e.date);
+    const sameDay = (d) => rows.filter((r) => r.date === d).length > 1;
+    const labels = rows.map((e) => (sameDay(e.date) ? `${e.date.slice(5)} ${e.time.slice(0, 5)}` : e.date));
     const data = rows.map((e) => e.weight);
     const ds = [
       { label: "몸무게", data, borderColor: cssVar("--accent"), backgroundColor: cssVar("--accent-soft"),
@@ -327,7 +328,7 @@ function MeView() {
             return html`<tr key=${e.id}>
               <td>${e.date} ${e.time.slice(0, 5)}</td>
               <td>${fmtKg(e.weight)} kg</td>
-              <td class=${d == null ? "" : d > 0 ? "delta-up" : "delta-down"}>${d == null ? "–" : (d > 0 ? "+" : "−") + fmtKg(Math.abs(d))}</td>
+              <td class=${d == null || Math.abs(d) < 0.05 ? "" : d > 0 ? "delta-up" : "delta-down"}>${d == null ? "–" : Math.abs(d) < 0.05 ? "±0" : (d > 0 ? "+" : "−") + fmtKg(Math.abs(d))}</td>
               <td class="q">${e.note || "–"}</td>
               <td><button class="row-del" onClick=${() => del(e.id)} aria-label="삭제">✕</button></td>
             </tr>`;
