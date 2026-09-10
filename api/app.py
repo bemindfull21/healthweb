@@ -234,6 +234,25 @@ def iso_z(d: Optional[dt.datetime] = None) -> str:
     return d.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def parse_iso_utc(s: Optional[str]) -> Optional[dt.datetime]:
+    """ISO 8601(Z/offset/날짜만) → naive UTC. 빈 값이면 None."""
+    if not s or not s.strip():
+        return None
+    t = re.sub(r"\.\d+", "", s.strip())
+    if t.endswith("Z"):
+        t = t[:-1] + "+00:00"
+    try:
+        d = dt.datetime.fromisoformat(t)
+    except ValueError:
+        try:
+            d = dt.datetime.strptime(t[:10], "%Y-%m-%d")
+        except ValueError:
+            raise HTTPException(400, "날짜 형식이 올바르지 않습니다")
+    if d.tzinfo is not None:
+        d = d.astimezone(dt.timezone.utc).replace(tzinfo=None)
+    return d.replace(microsecond=0)
+
+
 NOTIFY_VERB = {
     "encourage": "님이 응원했어요",
     "comment": "님이 댓글을 남겼어요",
@@ -489,6 +508,14 @@ class TgLinkIn(BaseModel):
 
 class TgUnlinkIn(BaseModel):
     chat_id: int
+
+
+class AnnouncementIn(BaseModel):
+    title: Optional[str] = None
+    body: str
+    link: Optional[str] = None
+    starts_at: Optional[str] = None  # ISO(UTC) 또는 null
+    ends_at: Optional[str] = None
 
 
 class CommentIn(BaseModel):
@@ -1410,6 +1437,39 @@ def public_challenge(cid: int, request: Request) -> dict:
 
 # ---------- 알림 ----------
 
+def _announcement_row(r: dict, admin: bool = False) -> dict:
+    out = {
+        "id": r["id"],
+        "title": r["title"],
+        "body": r["body"],
+        "link": r["link"],
+        "starts_at": iso_z(r["starts_at"]) if r["starts_at"] else None,
+        "ends_at": iso_z(r["ends_at"]) if r["ends_at"] else None,
+        "created_at": iso_z(r["created_at"]),
+    }
+    if admin:
+        now = utcnow()
+        if r["starts_at"] and r["starts_at"] > now:
+            out["state"] = "scheduled"
+        elif r["ends_at"] and r["ends_at"] < now:
+            out["state"] = "expired"
+        else:
+            out["state"] = "live"
+    return out
+
+
+def _active_announcements() -> list[dict]:
+    rows = qall(
+        "select id, title, body, link, starts_at, ends_at, created_at "
+        "from healthweb.announcement "
+        "where (starts_at is null or starts_at <= :now) "
+        "  and (ends_at is null or ends_at >= :now) "
+        "order by id desc fetch first 3 rows only",
+        now=utcnow(),
+    )
+    return [_announcement_row(r) for r in rows]
+
+
 @app.get("/notifications")
 def notifications(u: dict = Depends(current_user), cursor: Optional[int] = None, limit: int = 30) -> dict:
     limit = max(1, min(limit, 50))
@@ -1433,7 +1493,10 @@ def notifications(u: dict = Depends(current_user), cursor: Optional[int] = None,
          "created_at": iso_z(r["created_at"])}
         for r in rows
     ]
-    return {"items": items, "next_cursor": items[-1]["id"] if len(items) == limit else None}
+    out = {"items": items, "next_cursor": items[-1]["id"] if len(items) == limit else None}
+    if not cursor:  # 첫 페이지에만 공지
+        out["announcements"] = _active_announcements()
+    return out
 
 
 @app.get("/notifications/unread-count")
@@ -1567,6 +1630,64 @@ def admin_resolve(rid: int, body: ResolveIn, u: dict = Depends(current_user)) ->
         "where target_kind = :k and target_id = :t and status = 'open'",
         k=tk, t=tid,
     )
+    return {"ok": True}
+
+
+# ---------- 관리자 공지 ----------
+
+def _announce_fields(body: AnnouncementIn) -> dict:
+    text = (body.body or "").strip()
+    if not (1 <= len(text) <= 1000):
+        raise HTTPException(400, "공지 본문은 1–1000자입니다")
+    title = (body.title or "").strip()[:80] or None
+    link = clean_link(body.link) if body.link else None
+    starts = parse_iso_utc(body.starts_at)
+    ends = parse_iso_utc(body.ends_at)
+    if starts and ends and ends < starts:
+        raise HTTPException(400, "종료일이 시작일보다 빠릅니다")
+    return {"title": title, "body": text, "link": link, "starts": starts, "ends": ends}
+
+
+@app.get("/admin/announcements")
+def admin_announcements(u: dict = Depends(current_user)) -> dict:
+    require_owner(u)
+    rows = qall(
+        "select id, title, body, link, starts_at, ends_at, created_at "
+        "from healthweb.announcement order by id desc",
+    )
+    return {"items": [_announcement_row(r, admin=True) for r in rows]}
+
+
+@app.post("/admin/announcements")
+def create_announcement(body: AnnouncementIn, u: dict = Depends(current_user)) -> dict:
+    require_owner(u)
+    f = _announce_fields(body)
+    aid = insert_id(
+        "insert into healthweb.announcement (title, body, link, starts_at, ends_at, created_by) "
+        "values (:t, :b, :l, :s, :e, :o) returning id into :new_id",
+        t=f["title"], b=f["body"], l=f["link"], s=f["starts"], e=f["ends"], o=u["login_id"],
+    )
+    return {"id": aid}
+
+
+@app.patch("/admin/announcements/{aid}")
+def update_announcement(aid: int, body: AnnouncementIn, u: dict = Depends(current_user)) -> dict:
+    require_owner(u)
+    if q1("select 1 x from healthweb.announcement where id = :i", i=aid) is None:
+        raise HTTPException(404, "없는 공지입니다")
+    f = _announce_fields(body)
+    dml(
+        "update healthweb.announcement set title = :t, body = :b, link = :l, "
+        "starts_at = :s, ends_at = :e where id = :i",
+        t=f["title"], b=f["body"], l=f["link"], s=f["starts"], e=f["ends"], i=aid,
+    )
+    return {"ok": True}
+
+
+@app.delete("/admin/announcements/{aid}")
+def delete_announcement(aid: int, u: dict = Depends(current_user)) -> dict:
+    require_owner(u)
+    dml("delete from healthweb.announcement where id = :i", i=aid)
     return {"ok": True}
 
 

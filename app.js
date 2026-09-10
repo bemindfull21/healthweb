@@ -832,31 +832,50 @@ function ChallengeView({ id }) {
 }
 
 // ---------- 뷰: 알림 ----------
+function NoticeCard({ a }) {
+  const inner = html`
+    ${a.title && html`<div class="notice-title">${a.title}</div>`}
+    <p class="notice-body">${a.body}</p>
+    ${a.link && html`<span class="notice-more">자세히 보기 →</span>`}
+  `;
+  return a.link
+    ? html`<a class="notice-card" href=${a.link} target="_blank" rel="noopener noreferrer">${inner}</a>`
+    : html`<div class="notice-card">${inner}</div>`;
+}
+
 function NotificationsView() {
   const { bumpKey, nav, clearUnread } = useStore();
-  const [items, setItems] = useState(null);
+  const [data, setData] = useState(null);
   const [state, setState] = useState("loading");
 
   useEffect(() => {
     setState("loading");
     api("/notifications").then((d) => {
-      setItems(d.items); setState("ok");
+      setData(d); setState("ok");
       api("/notifications/read", { method: "POST" }).then(clearUnread).catch(() => {});
     }).catch(() => setState("err"));
   }, [bumpKey]);
 
   if (state === "loading") return html`<${Spinner} />`;
   if (state === "err") return html`<${ErrorBox} msg="알림을 불러오지 못했습니다" />`;
-  if (items.length === 0) return html`<div class="empty">아직 알림이 없어요.</div>`;
 
+  const anns = data.announcements || [];
+  const items = data.items || [];
   const verb = { encourage: "님이 응원했어요", comment: "님이 댓글을 남겼어요", follow: "님이 팔로우했어요" };
+
   return html`<div class="view notifications">
-    ${items.map((n) => html`
-      <button class=${"notif" + (n.read ? "" : " unread")} key=${n.id}
-        onClick=${() => n.post_id ? nav(`/p/${n.post_id}`) : nav(`/u/${encodeURIComponent(n.actor_name)}`)}>
-        <span><b>${n.actor_name}</b>${verb[n.kind] || ""}</span>
-        <span class="notif-time">${relTime(n.created_at)}</span>
-      </button>`)}
+    ${anns.length > 0 && html`
+      <div class="notice-divider">공지</div>
+      ${anns.map((a) => html`<${NoticeCard} key=${a.id} a=${a} />`)}
+    `}
+    ${items.length === 0 && anns.length === 0
+      ? html`<div class="empty">아직 알림이 없어요.</div>`
+      : items.map((n) => html`
+        <button class=${"notif" + (n.read ? "" : " unread")} key=${n.id}
+          onClick=${() => n.post_id ? nav(`/p/${n.post_id}`) : nav(`/u/${encodeURIComponent(n.actor_name)}`)}>
+          <span><b>${n.actor_name}</b>${verb[n.kind] || ""}</span>
+          <span class="notif-time">${relTime(n.created_at)}</span>
+        </button>`)}
   </div>`;
 }
 
@@ -936,7 +955,7 @@ function SettingsView() {
   const upd = (k) => (e) => setF({ ...f, [k]: e.target.value });
   return html`<div class="view settings">
     ${meInfo.is_owner && html`<button class="admin-link" onClick=${() => nav("/admin")}>
-      신고 관리${meInfo.open_reports ? ` (${meInfo.open_reports})` : ""}
+      관리자${meInfo.open_reports ? ` · 신고 ${meInfo.open_reports}` : ""}
     </button>`}
     <div class="panel">
       <div class="panel-head"><span>프로필</span></div>
@@ -993,6 +1012,110 @@ function SettingsView() {
 
     <button class="logout" onClick=${logout}>로그아웃</button>
   </div>`;
+}
+
+// ---------- 뷰: 관리자 허브 ----------
+function AdminHubView() {
+  const { nav } = useStore();
+  const [me, setLocalMe] = useState(null);
+  useEffect(() => { api("/auth/me").then(setLocalMe).catch(() => setLocalMe({})); }, []);
+  if (me && !me.is_owner) return html`<div class="view"><${ErrorBox} msg="권한이 없습니다" /></div>`;
+  return html`<div class="view admin-hub">
+    <button class="hub-item" onClick=${() => nav("/admin/reports")}>
+      <span>신고 관리</span>
+      ${me && me.open_reports ? html`<span class="hub-badge">${me.open_reports}</span>` : ""}
+    </button>
+    <button class="hub-item" onClick=${() => nav("/admin/announcements")}>
+      <span>공지 관리</span>
+    </button>
+  </div>`;
+}
+
+// ---------- 뷰: 공지 관리 (오너) ----------
+function AdminAnnouncementsView() {
+  const { toast } = useStore();
+  const [items, setItems] = useState(null);
+  const [state, setState] = useState("loading");
+  const [editing, setEditing] = useState(null); // 공지 객체 or {} (신규) or null
+
+  const load = useCallback(() => {
+    setState("loading");
+    api("/admin/announcements").then((d) => { setItems(d.items); setState("ok"); })
+      .catch((e) => setState(e.status === 403 ? "forbidden" : "err"));
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  const save = async (form) => {
+    const body = {
+      title: form.title || null, body: form.body, link: form.link || null,
+      starts_at: form.starts ? new Date(form.starts).toISOString() : null,
+      ends_at: form.ends ? new Date(form.ends + "T23:59:59").toISOString() : null,
+    };
+    try {
+      if (editing.id) await api(`/admin/announcements/${editing.id}`, { method: "PATCH", body });
+      else await api("/admin/announcements", { method: "POST", body });
+      toast("저장했습니다"); setEditing(null); load();
+    } catch (e) { toast(e.detail, "err"); }
+  };
+  const del = async (id) => {
+    if (!confirm("이 공지를 삭제할까요?")) return;
+    try { await api(`/admin/announcements/${id}`, { method: "DELETE" }); toast("삭제했습니다"); load(); }
+    catch (e) { toast(e.detail, "err"); }
+  };
+
+  if (state === "loading") return html`<${Spinner} />`;
+  if (state === "forbidden") return html`<div class="view"><${ErrorBox} msg="권한이 없습니다" /></div>`;
+  if (state === "err") return html`<div class="view"><${ErrorBox} msg="불러오지 못했습니다" onRetry=${load} /></div>`;
+
+  const stateLabel = { scheduled: "예정", live: "게시 중", expired: "종료" };
+  const dOnly = (iso) => (iso ? iso.slice(0, 10) : "");
+  return html`<div class="view admin">
+    ${editing
+      ? html`<${AnnouncementForm} initial=${editing} onSave=${save} onCancel=${() => setEditing(null)} />`
+      : html`<button class="write-btn" onClick=${() => setEditing({})}>＋ 새 공지</button>`}
+    ${items.length === 0 && !editing
+      ? html`<div class="empty">공지가 없어요.</div>`
+      : items.map((a) => html`<div class="ann-card" key=${a.id}>
+          <div class="ann-head">
+            <span class=${"ann-state ann-" + a.state}>${stateLabel[a.state]}</span>
+            <span class="muted sm">${dOnly(a.starts_at) || "즉시"} ~ ${dOnly(a.ends_at) || "무기한"}</span>
+          </div>
+          ${a.title && html`<div class="ann-title">${a.title}</div>`}
+          <p class="ann-body">${a.body}</p>
+          <div class="ann-actions">
+            <button class="ghost" onClick=${() => setEditing({
+              id: a.id, title: a.title || "", body: a.body, link: a.link || "",
+              starts: dOnly(a.starts_at), ends: dOnly(a.ends_at),
+            })}>수정</button>
+            <button class="danger" onClick=${() => del(a.id)}>삭제</button>
+          </div>
+        </div>`)}
+  </div>`;
+}
+
+function AnnouncementForm({ initial, onSave, onCancel }) {
+  const [f, setF] = useState({
+    title: initial.title || "", body: initial.body || "", link: initial.link || "",
+    starts: initial.starts || "", ends: initial.ends || "",
+  });
+  const upd = (k) => (e) => setF({ ...f, [k]: e.target.value });
+  const submit = (e) => { e.preventDefault(); if (f.body.trim()) onSave(f); };
+  return html`<form class="panel ann-form" onSubmit=${submit}>
+    <label>제목 (선택)
+      <input value=${f.title} onInput=${upd("title")} maxlength="80" /></label>
+    <label>본문
+      <textarea rows="3" value=${f.body} onInput=${upd("body")} maxlength="1000" required></textarea></label>
+    <label>링크 (선택) <span class="hint">전체 URL</span>
+      <input value=${f.link} onInput=${upd("link")} maxlength="300" placeholder="https://" inputmode="url" /></label>
+    <label>게시 시작일 (선택) <span class="hint">비우면 즉시</span>
+      <input type="date" value=${f.starts} onInput=${upd("starts")} /></label>
+    <label>게시 종료일 (선택) <span class="hint">비우면 무기한 · 그날 끝까지</span>
+      <input type="date" value=${f.ends} onInput=${upd("ends")} /></label>
+    <div class="ann-form-actions">
+      <button type="submit" disabled=${!f.body.trim()}>저장</button>
+      <button type="button" class="ghost" onClick=${onCancel}>취소</button>
+    </div>
+  </form>`;
 }
 
 // ---------- 뷰: 신고 관리 (오너) ----------
@@ -1238,7 +1361,9 @@ function App() {
   else if (route === "/notifications") { view = html`<${NotificationsView} />`; title = "알림"; }
   else if (route === "/me") { view = html`<${MeView} />`; title = "나"; }
   else if (route === "/search") { view = html`<${SearchView} />`; title = "검색"; back = () => history.back(); }
-  else if (route === "/admin") { view = html`<${AdminReportsView} />`; title = "신고 관리"; back = () => nav("/settings"); }
+  else if (route === "/admin") { view = html`<${AdminHubView} />`; title = "관리자"; back = () => nav("/settings"); }
+  else if (route === "/admin/reports") { view = html`<${AdminReportsView} />`; title = "신고 관리"; back = () => nav("/admin"); }
+  else if (route === "/admin/announcements") { view = html`<${AdminAnnouncementsView} />`; title = "공지 관리"; back = () => nav("/admin"); }
   else if (route === "/settings") { view = html`<${SettingsView} />`; title = "설정"; back = () => nav("/me"); }
   else if (m) { view = html`<${PostView} id=${m[1]} />`; title = "글"; back = () => history.back(); }
   else if (up) {

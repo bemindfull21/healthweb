@@ -428,4 +428,40 @@ img.avatar { object-fit: cover; display: block; }
 .rc-target { font-size: .9rem; line-height: 1.5; margin-bottom: 12px; white-space: pre-wrap; }
 .rc-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .rc-actions button { font-size: .85rem; padding: 7px 12px; }
-.rc-actions .danger { background: var(--error); color: #fff; }
+.danger { background: var(--error); color: #fff; }
+
+/* ============ 관리자 허브 · 공지 ============ */
+.admin-hub { display: grid; gap: 10px; }
+.hub-item {
+  display: flex; align-items: center; justify-content: space-between;
+  background: var(--card); color: var(--text); border: 1px solid var(--border);
+  border-radius: 12px; padding: 16px; font-weight: 600; font-size: 1rem;
+}
+.hub-badge { background: var(--up); color: #fff; font-size: .75rem; font-weight: 700; padding: 2px 9px; border-radius: 999px; }
+
+.ann-card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 14px; margin-bottom: 12px; }
+.ann-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; }
+.ann-state { font-size: .72rem; font-weight: 700; padding: 2px 8px; border-radius: 999px; }
+.ann-live { background: var(--accent-soft); color: var(--accent); }
+.ann-scheduled { background: var(--social-soft); color: var(--social); }
+.ann-expired { background: var(--card-2); color: var(--muted); }
+.ann-title { font-weight: 700; margin-bottom: 4px; }
+.ann-body { margin: 0 0 12px; white-space: pre-wrap; line-height: 1.5; }
+.ann-actions { display: flex; gap: 8px; }
+.ann-actions button { font-size: .85rem; padding: 7px 12px; }
+.ann-form { display: grid; gap: 12px; margin-bottom: 14px; }
+.ann-form-actions { display: flex; gap: 8px; }
+
+/* ============ 공지 (알림 페이지) ============ */
+.notice-divider {
+  font-size: .78rem; font-weight: 700; color: var(--social);
+  letter-spacing: .04em; margin: 2px 0 10px;
+}
+.notice-card {
+  display: block; text-decoration: none; color: var(--text);
+  background: var(--social-soft); border: 1px solid var(--social);
+  border-radius: 12px; padding: 14px; margin-bottom: 10px;
+}
+.notice-title { font-weight: 700; margin-bottom: 4px; }
+.notice-body { margin: 0; white-space: pre-wrap; line-height: 1.55; }
+.notice-more { display: inline-block; margin-top: 8px; color: var(--social); font-size: .85rem; font-weight: 600; }
