@@ -48,6 +48,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | 신고 (P3b) | `POST /reports` (`{target_kind∈{post,comment,user},target_id,reason}`, user 는 이름으로) · `GET /admin/reports?status=` (오너 전용) · `POST /admin/reports/:id/resolve` (`{action: delete_post|delete_comment|none}`) |
 | 텔레그램 알림 (옵트인) | `POST /push/telegram/code` → `{code,deep_link}` (10분 · 일회용) · `GET/DELETE /push/telegram` · `POST /internal/telegram/{link,unlink}` (`X-Internal-Key`, 봇→API 로컬 호출) |
 | 관리자 공지 | `GET/POST /admin/announcements` · `PATCH/DELETE /admin/announcements/:id` (오너 전용). `GET /notifications` 첫 페이지 응답에 `announcements`(활성 3개). `announcement`(title·body·link·starts_at·ends_at) 유효기간은 naive UTC, `_active_announcements()`. `parse_iso_utc()` 로 ISO(Z/offset/날짜만) → naive UTC |
+| 등급 (자기돌봄 습관) | `app_user.rank_level`(1~5)·`rank_score` — `/auth/me`·`GET /u/:handle`·`FEED_SQL`(글 작성자)에 노출. `_refresh_rank()` 를 `POST /weights`·`.../checkin` 성공 시 호출, 점수가 이전보다 클 때만 갱신(하락 없음). 등급 상승 시 `notification`(kind='rank', rank_level) + 텔레그램 |
 
 - bcrypt · PyJWT(HS256, 7일). 회원가입 폼은 비밀번호 확인 필드 포함(프론트 검증). `login_id`는 API 응답의 공개 컨텍스트(피드/프로필/댓글)에 절대 안 나감 — `name`만.
 - **P3a 리치 프로필**: `PATCH /auth/me` 에 `link`(URL 정규화·검증) · `location` · `pinned_post_id`(0이하 = 해제, 본인 글만). `GET /u/:handle` 에 `link`·`location`·`post_count`·`challenge_count`·`pinned`(고정 글, `posts`에서 제외)·`trend_series`(public 한정, 스파크라인용).
@@ -55,6 +56,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **P3b 이미지**: 파일 실체는 VM `MEDIA_DIR`, 메타는 `media` 테이블. `_process_image()` 가 Pillow 로 EXIF 제거·RGB 변환·리사이즈(표시 1280 / 아바타 400 정사각 / 썸네일 320) → JPEG 2장. 8MB·MIME(jpeg/png/webp)·유저당 200장 제한. `_own_media()` 로 첨부 시 소유·kind 검증. `_gc_media()` 가 글/기록 삭제 시 참조 없는 파일 정리. 아바타는 `PATCH /auth/me` `avatar_media_id`(0=제거), 글은 `POST /posts` `image_media_id`, 진행 사진은 `POST /weights` `photo_media_id`(**share=True 필수** — 비공개 사진 없음). `FEED_SQL`·`/u/:handle`·`GET /weights`·댓글·검색 응답에 이미지/아바타 URL 추가.
 - **P3b 신고**: `report`(reporter·target_kind·target_id·reason·status). 중복(같은 reporter+target open)은 API 에서 무시. `OWNER_LOGIN_ID` env 로 오너 판별 → `/auth/me` 에 `is_owner`·`open_reports`. `_purge_post()` 로 관리자 글 삭제 재사용.
 - **텔레그램 알림 (옵트인)**: 설정에서 `POST /push/telegram/code` → 딥링크(`t.me/<bot>?start=<코드>`). 봇이 `/start <코드>` 받으면 `update.effective_chat.id` + 코드로 `POST /internal/telegram/link` 호출 → `app_user.tg_chat_id` 저장. `notify()` 가 알림 행 넣은 뒤 `_maybe_push()` → 데몬 스레드로 `api.telegram.org/sendMessage`(fire-and-forget). 403/400 응답 시 `tg_chat_id` 자동 해제. `TELEGRAM_BOT_TOKEN` 없으면 전 기능 no-op(`/push/telegram` `available:false`). 코드 만료 비교는 `utcnow()`(naive UTC) — 세션 TZ 이슈 회피.
+- **등급**: 흑연(1)·흑요석(2)·자수정(3)·사파이어(4)·다이아몬드(5) — `RANK_NAMES`. 점수 = 기록한 날수×1 + 역대 최장 연속 기록일(`_longest_streak()`, 현재 스트릭 아님)×2 + 완주 챌린지(체크인≥target_days)×30 + 챌린지 체크인 총수×1. `RANK_THRESHOLDS`/가중치는 `app.py` 상단 상수 — 초기값(0/50/200/600/1500)은 추정치, 실사용 데이터로 재조정 예정. **절대 하락하지 않음**(`_refresh_rank()` 이 새 점수 ≤ 저장값이면 무시) — 순위표 없음(오너만 보는 랭킹 페이지 없음), 개인 마일스톤. 기존 유저는 배포 시 1회 백필(`scratchpad/backfill_rank.py` 패턴, `_startup()` 수동 호출 후 전 유저 `_refresh_rank()`).
 - `weight_privacy`(`private`/`trend`/`public`): 프로필의 몸무게 노출 + `log` 글의 weight 표시 여부(`public`만).
 - 코드/시각: `parse_dt`는 사용자 벽시계 시각 그대로 저장(naive). `iso_z` 응답.
 - 전역 `@app.exception_handler(Exception)` → `{"detail": ...}` JSON 500.
@@ -82,6 +84,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 `sql/041_telegram_notify.sql` (**적용됨** — healthweb 유저): `app_user` +`tg_chat_id` · `tg_link_code`(code PK · login_id · created_at, TTL·1회용은 API 처리).
 
 `sql/042_announcements.sql` (**적용됨** — healthweb 유저): `announcement`(title · body · link · starts_at · ends_at · created_by).
+
+`sql/043_rank.sql` (**적용됨** — healthweb 유저): `app_user` +`rank_score`·`rank_level`(1~5, 기본 1) · `notification` +`rank_level` ·
+`notification.kind` 체크 제약에 `'rank'` 추가(기존 제약은 이름 없이 생성돼 조회 후 drop 필요 — PL/SQL 블록으로 처리, `search_condition_vc` 는 **소문자 그대로 저장**되니 `upper()` 비교 필수).
 
 `sql/011_migrate_owner_weights.sql` — 오너가 가입 후 `<LOGIN_ID>` 바꿔 실행 (구 텔레그램 이력 → weight_entry).
 
@@ -112,6 +117,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 프론트: `Avatar`·`ImageUpload`(canvas 리사이즈)·`Lightbox` 컴포넌트 · `PostCard`/`PostView` 이미지·아바타 렌더 ·
 `WeightModal`(진행 사진 항상 노출, 첨부 시 자동 공유)·`PostModal`·`SettingsView`(avatar-row) 이미지 첨부 · `PostView`·`ProfileView` ⋯메뉴에 신고 · `AdminReportsView`(`/admin`, `me.is_owner`면 설정에 링크) · `MeView` 표에 진행 사진 썸네일.
 `MeView` 상단에 프로필 헤더(아바타·이름·"내 프로필 보기"·**설정** 버튼) — 이전엔 `/settings` 진입점이 자기 글의 이름 탭뿐이었음.
+
+## 등급 (2026-09-11) — 구현·배포됨
+
+흑연~다이아몬드 5단계, 광물 강도 은유. `about.html`에 도입 배경(등급=순위 아닌 굳기, 하락 없음) + 산정 기준표 + 등급 구간표 추가.
+프론트: `RankBadge`(`RANK_NAME` 매핑) — `PostCard`·`PostView`(작성자 이름 옆) · `MeView`(`.me-head`) · `ProfileView`(`.phandle`)에 렌더.
+`NotificationsView` 는 `kind==='rank'` 항목을 "🎉 {뱃지} 등급이 되었어요"로 특수 렌더, 클릭 시 `/me`.
+CSS: `--rank-1~5`/`--rank-N-soft` 토큰(라이트/다크) + `.rank-badge`, 다이아몬드만 그라디언트+보더로 차별화.
 
 ## 미완 (Phase 3c+)
 
