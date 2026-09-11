@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 # health-web
 
-체중 관리로 건강한 삶을 만드는 사람들의 커뮤니티. 몸무게 기록 + 피드/응원.
+자기이해·자기수용·자기돌봄(자기사랑)을 습관으로 만들어가는 사람들의 커뮤니티. 몸무게 기록은 자기돌봄의 상징 + 피드/응원.
 정적 프론트(GitHub Pages `bemindfull21/healthweb`, public) + VM FastAPI.
 
 ## Phase 1·2 (2026-09-09) — 현재
