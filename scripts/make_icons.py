@@ -26,10 +26,13 @@ def make_master() -> Image.Image:
     d.rectangle([S // 2, 0, S, S], fill=ROSE)
 
     # 굵은 M (둥근 이음새) — 0..100 좌표계를 S로 스케일, 폰트 없이 폴리라인으로 직접 그림
+    # M_SCALE: 중심(50,50) 기준으로 축소/확대 (1.0 = 원래 크기)
+    M_SCALE = 1 / 3
     def p(x, y):
-        return (x / 100 * S, y / 100 * S)
+        cx, cy = 50 + (x - 50) * M_SCALE, 50 + (y - 50) * M_SCALE
+        return (cx / 100 * S, cy / 100 * S)
     pts = [p(26, 76), p(26, 24), p(50, 54), p(74, 24), p(74, 76)]
-    width = int(0.135 * S)
+    width = int(0.135 * M_SCALE * S)
     d.line(pts, fill=WHITE, width=width, joint="curve")
     r = width / 2
     for x, y in pts:
