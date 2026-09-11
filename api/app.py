@@ -174,7 +174,7 @@ def current_user(authorization: str = Header(default="")) -> dict:
         raise HTTPException(401, "세션이 만료되었습니다. 다시 로그인해 주세요")
     u = q1(
         "select au.login_id, au.name, au.bio, au.link, au.location, au.pinned_post_id, "
-        "au.target_weight, au.weight_privacy, au.avatar_media_id, au.tg_chat_id, "
+        "au.target_weight, au.weight_privacy, au.avatar_media_id, au.tg_chat_id, au.rank_level, "
         "m.path avatar_path, m.thumb_path avatar_thumb "
         "from healthweb.app_user au "
         "left join healthweb.media m on m.id = au.avatar_media_id "
@@ -258,6 +258,14 @@ NOTIFY_VERB = {
     "comment": "님이 댓글을 남겼어요",
     "follow": "님이 팔로우했어요",
 }
+
+# ---------- 등급 (자기돌봄 습관이 단단해진 정도) ----------
+RANK_NAMES = {1: "흑연", 2: "흑요석", 3: "자수정", 4: "사파이어", 5: "다이아몬드"}
+RANK_THRESHOLDS = [(0, 1), (50, 2), (200, 3), (600, 4), (1500, 5)]  # (최소 점수, 등급)
+RANK_W_DAY = 1        # 기록한 날 (누적, 연속 아니어도 됨)
+RANK_W_STREAK = 2     # 역대 최장 연속 기록일
+RANK_W_COMPLETE = 30  # 완주한 챌린지 (체크인 수 >= 목표일수)
+RANK_W_CHECKIN = 1    # 챌린지 체크인 총 횟수
 
 
 def _tg_api(method: str, payload: dict) -> tuple[int, dict]:
@@ -636,6 +644,8 @@ def me(u: dict = Depends(current_user)) -> dict:
         "telegram_linked": u["tg_chat_id"] is not None,
         "target_weight": float(u["target_weight"]) if u["target_weight"] is not None else None,
         "weight_privacy": u["weight_privacy"],
+        "rank_level": u["rank_level"],
+        "rank_name": RANK_NAMES[u["rank_level"]],
     }
     if OWNER_LOGIN_ID and u["login_id"] == OWNER_LOGIN_ID:
         out["is_owner"] = True
@@ -810,6 +820,7 @@ def add_weight(body: WeightIn, u: dict = Depends(current_user)) -> dict:
             "values (:l, 'log', :b, :e, :m) returning id into :new_id",
             l=u["login_id"], b=note or "오늘도 기록했어요.", e=entry_id, m=photo,
         )
+    _refresh_rank(u["login_id"])
     return {"id": entry_id, "post_id": post_id}
 
 
@@ -844,6 +855,7 @@ def _post_row(r: dict) -> dict:
         "pinned": bool(r.get("pinned")),
         "image": _media_url(r.get("img_path"), r.get("img_thumb")),
         "avatar": _media_url(r.get("av_path"), r.get("av_thumb")),
+        "rank_level": r.get("rank_level"),
     }
     if r["kind"] == "log" and r.get("weight") is not None and r.get("weight_privacy") == "public":
         out["weight"] = float(r["weight"])
@@ -852,7 +864,7 @@ def _post_row(r: dict) -> dict:
 
 FEED_SQL = """
     select p.id, au.name, p.kind, p.body, p.created_at,
-           we.weight, au.weight_privacy,
+           we.weight, au.weight_privacy, au.rank_level,
            pm.path img_path, pm.thumb_path img_thumb,
            am.path av_path, am.thumb_path av_thumb,
            case when p.login_id = :viewer then 1 else 0 end mine,
@@ -1029,11 +1041,87 @@ def _streak(login_id: str) -> int:
     return n
 
 
+def _longest_streak(day_strs: list[str]) -> int:
+    """'YYYY-MM-DD' 문자열 목록에서 역대 최장 연속 구간 길이."""
+    if not day_strs:
+        return 0
+    days = sorted({dt.datetime.strptime(s, "%Y-%m-%d").date() for s in day_strs})
+    best = cur = 1
+    for i in range(1, len(days)):
+        if (days[i] - days[i - 1]).days == 1:
+            cur += 1
+            best = max(best, cur)
+        else:
+            cur = 1
+    return best
+
+
+def _rank_score(login_id: str) -> int:
+    days = qall(
+        "select distinct to_char(logged_at,'YYYY-MM-DD') d from healthweb.weight_entry where login_id = :v",
+        v=login_id,
+    )
+    day_list = [r["d"] for r in days]
+    chal = qall(
+        "select ch.target_days, count(cc.check_date) checkins "
+        "from healthweb.challenge_member cm "
+        "join healthweb.challenge ch on ch.id = cm.challenge_id "
+        "left join healthweb.challenge_checkin cc "
+        "  on cc.challenge_id = ch.id and cc.login_id = cm.login_id "
+        "where cm.login_id = :v group by ch.id, ch.target_days",
+        v=login_id,
+    )
+    total_checkins = sum(r["checkins"] or 0 for r in chal)
+    completed = sum(1 for r in chal if (r["checkins"] or 0) >= r["target_days"])
+    return (
+        len(day_list) * RANK_W_DAY
+        + _longest_streak(day_list) * RANK_W_STREAK
+        + completed * RANK_W_COMPLETE
+        + total_checkins * RANK_W_CHECKIN
+    )
+
+
+def _rank_level(score: int) -> int:
+    level = 1
+    for threshold, lvl in RANK_THRESHOLDS:
+        if score >= threshold:
+            level = lvl
+    return level
+
+
+def _refresh_rank(login_id: str) -> None:
+    """점수·등급 재계산. 등급은 절대 내려가지 않는다 — 실제 계산값이 이전 저장값보다 낮으면 무시."""
+    score = _rank_score(login_id)
+    prev = q1(
+        "select rank_score, rank_level from healthweb.app_user where login_id = :v", v=login_id
+    )
+    prev_score = prev["rank_score"] if prev else 0
+    prev_level = prev["rank_level"] if prev else 1
+    if score <= prev_score:
+        return
+    level = _rank_level(score)
+    dml(
+        "update healthweb.app_user set rank_score = :s, rank_level = :l where login_id = :v",
+        s=score, l=level, v=login_id,
+    )
+    if level > prev_level:
+        dml(
+            "insert into healthweb.notification (login_id, kind, actor, post_id, rank_level) "
+            "values (:v, 'rank', :v, null, :l)",
+            v=login_id, l=level,
+        )
+        if TG_TOKEN:
+            row = q1("select tg_chat_id from healthweb.app_user where login_id = :v", v=login_id)
+            if row and row["tg_chat_id"] is not None:
+                text = f"\U0001f389 {RANK_NAMES[level]} 등급이 되었어요!\n{WEB_APP_URL}/me"
+                threading.Thread(target=_push_worker, args=(int(row["tg_chat_id"]), text), daemon=True).start()
+
+
 @app.get("/u/{handle}")
 def profile(handle: str, u: dict = Depends(current_user)) -> dict:
     p = q1(
         "select au.login_id, au.name, au.bio, au.link, au.location, au.pinned_post_id, "
-        "au.target_weight, au.weight_privacy, au.created_at, "
+        "au.target_weight, au.weight_privacy, au.created_at, au.rank_level, "
         "m.path av_path, m.thumb_path av_thumb "
         "from healthweb.app_user au "
         "left join healthweb.media m on m.id = au.avatar_media_id "
@@ -1063,6 +1151,8 @@ def profile(handle: str, u: dict = Depends(current_user)) -> dict:
         "created_at": iso_z(p["created_at"]),
         "weight_privacy": p["weight_privacy"],
         "streak": _streak(pl),
+        "rank_level": p["rank_level"],
+        "rank_name": RANK_NAMES[p["rank_level"]],
         "mine": pl == me,
         "post_count": q1("select count(*) c from healthweb.post where login_id = :v", v=pl)["c"],
         "challenge_count": q1(
@@ -1383,6 +1473,7 @@ def checkin(cid: int, body: CheckinIn, u: dict = Depends(current_user)) -> dict:
             "values (:c, :l, :d)",
             c=cid, l=u["login_id"], d=d,
         )
+        _refresh_rank(u["login_id"])
     except oracledb.IntegrityError:
         pass
     return _challenge_progress(cid, u["login_id"])
@@ -1478,7 +1569,7 @@ def notifications(u: dict = Depends(current_user), cursor: Optional[int] = None,
     if cursor:
         binds["cur"] = cursor
     rows = qall(
-        "select n.id, n.kind, n.post_id, n.read_at, n.created_at, au.name actor_name "
+        "select n.id, n.kind, n.post_id, n.rank_level, n.read_at, n.created_at, au.name actor_name "
         "from healthweb.notification n join healthweb.app_user au on au.login_id = n.actor "
         "where n.login_id = :me " + where + " "
         "and n.actor not in ("
@@ -1488,7 +1579,7 @@ def notifications(u: dict = Depends(current_user), cursor: Optional[int] = None,
         **binds,
     )
     items = [
-        {"id": r["id"], "kind": r["kind"], "post_id": r["post_id"],
+        {"id": r["id"], "kind": r["kind"], "post_id": r["post_id"], "rank_level": r["rank_level"],
          "actor_name": r["actor_name"], "read": r["read_at"] is not None,
          "created_at": iso_z(r["created_at"])}
         for r in rows

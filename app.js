@@ -155,6 +155,12 @@ function KindBadge({ kind }) {
   return html`<span class=${"kind kind-" + kind}>${KIND_LABEL[kind] || kind}</span>`;
 }
 
+const RANK_NAME = { 1: "흑연", 2: "흑요석", 3: "자수정", 4: "사파이어", 5: "다이아몬드" };
+function RankBadge({ level }) {
+  if (!level) return null;
+  return html`<span class=${"rank-badge rank-" + level}>${RANK_NAME[level]}</span>`;
+}
+
 function EncourageBtn({ post, big }) {
   const [on, setOn] = useState(post.i_encouraged);
   const [count, setCount] = useState(post.encourage_count);
@@ -183,6 +189,7 @@ function PostCard({ post }) {
       <button class="pc-user" onClick=${goUser}>
         <${Avatar} src=${post.avatar && post.avatar.thumb_url} name=${post.name} size="sm" />
         <span class="handle">${post.name}</span>
+        <${RankBadge} level=${post.rank_level} />
       </button>
       <${KindBadge} kind=${post.kind} />
       <span class="post-time">${relTime(post.created_at)}</span>
@@ -480,7 +487,7 @@ function MeView() {
     <div class="me-head">
       <${Avatar} src=${me && me.avatar && me.avatar.url} name=${me && me.name} size="lg" />
       <div class="me-head-id">
-        <div class="me-name">${me ? me.name : ""}</div>
+        <div class="me-name">${me ? me.name : ""} <${RankBadge} level=${me && me.rank_level} /></div>
         ${me && me.name && html`<button class="link-btn"
           onClick=${() => nav(`/u/${encodeURIComponent(me.name)}`)}>내 프로필 보기</button>`}
       </div>
@@ -580,6 +587,7 @@ function PostView({ id }) {
       <button class="pc-user" onClick=${() => nav(`/u/${encodeURIComponent(post.name)}`)}>
         <${Avatar} src=${post.avatar && post.avatar.thumb_url} name=${post.name} size="sm" />
         <span class="handle">${post.name}</span>
+        <${RankBadge} level=${post.rank_level} />
       </button>
       <${KindBadge} kind=${post.kind} />
       <span class="post-time">${relTime(post.created_at)}</span>
@@ -685,7 +693,7 @@ function ProfileView({ handle }) {
     <div class="profile-head">
       <${Avatar} src=${p.avatar && p.avatar.url} name=${p.name} size="lg" />
       <div class="profile-id">
-        <div class="phandle">${p.name}</div>
+        <div class="phandle">${p.name} <${RankBadge} level=${p.rank_level} /></div>
         ${p.bio && html`<p class="pbio">${p.bio}</p>`}
       </div>
       ${p.mine
@@ -872,8 +880,10 @@ function NotificationsView() {
       ? html`<div class="empty">아직 알림이 없어요.</div>`
       : items.map((n) => html`
         <button class=${"notif" + (n.read ? "" : " unread")} key=${n.id}
-          onClick=${() => n.post_id ? nav(`/p/${n.post_id}`) : nav(`/u/${encodeURIComponent(n.actor_name)}`)}>
-          <span><b>${n.actor_name}</b>${verb[n.kind] || ""}</span>
+          onClick=${() => n.kind === "rank" ? nav("/me") : n.post_id ? nav(`/p/${n.post_id}`) : nav(`/u/${encodeURIComponent(n.actor_name)}`)}>
+          ${n.kind === "rank"
+            ? html`<span>🎉 <${RankBadge} level=${n.rank_level} /> 등급이 되었어요</span>`
+            : html`<span><b>${n.actor_name}</b>${verb[n.kind] || ""}</span>`}
           <span class="notif-time">${relTime(n.created_at)}</span>
         </button>`)}
   </div>`;
