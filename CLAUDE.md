@@ -46,7 +46,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 |---|---|
 | 인증 | `GET /auth/check?login_id=&name=` (둘 다 중복확인) · `POST /auth/signup` (login_id·name·password·target_weight) · `/auth/signin` · `/auth/reset` (login_id + **name 일치**) · `GET/PATCH /auth/me` |
 | 몸무게 | `GET/POST /weights` · `DELETE /weights/:id` (연결 글은 링크만 끊음) |
-| 커뮤니티 | `GET /feed?scope=following|all&cursor=` · `POST /posts` · `GET /posts/:id` · `PATCH /posts/:id`(`{body}`, 본인 글만) · `POST/DELETE /posts/:id/encourage` · `POST /posts/:id/comments` · `DELETE /posts/:id` · `GET /u/:handle` |
+| 커뮤니티 | `GET /feed?scope=following|all&cursor=` · `POST /posts` · `GET /posts/:id` · `PATCH /posts/:id`(`{body, kind?}`, 본인 글만) · `POST/DELETE /posts/:id/encourage` · `POST /posts/:id/comments` · `DELETE /posts/:id` · `GET /u/:handle` |
 | 팔로우 (P2) | `POST/DELETE /u/:handle/follow` · `GET /u/:handle/{followers|following}` |
 | 챌린지 (P2) | `GET/POST /challenges` · `GET /challenges/:id` · `POST /challenges/:id/join` · `DELETE .../leave` · `POST .../checkin` (`{date}`) · `DELETE .../checkin/:date` |
 | 알림 (P2) | `GET /notifications?cursor=` · `GET /notifications/unread-count` · `POST /notifications/read` |
@@ -97,6 +97,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 `notification.kind` 체크 제약에 `'rank'` 추가(기존 제약은 이름 없이 생성돼 조회 후 drop 필요 — PL/SQL 블록으로 처리, `search_condition_vc` 는 **소문자 그대로 저장**되니 `upper()` 비교 필수).
 
 `sql/011_migrate_owner_weights.sql` — 오너가 가입 후 `<LOGIN_ID>` 바꿔 실행 (구 텔레그램 이력 → weight_entry).
+
+`sql/044_post_kind.sql` (**적용됨** — healthweb 유저): `post.kind` 값 재편 — `log/routine/reflection/question` 폐기 →
+`brag/resolve/reflect/casual`("자랑"/"결심"/"반성"/"그냥"). 기존 데이터는 최선 추정 매핑(log→casual, routine→resolve,
+reflection→reflect, question→casual) 후 체크 제약 교체. 몸무게 공유 글의 weight 노출은 이제 `kind` 무관 —
+`weight_entry_id` 조인 결과(`weight` not null)만 본다(`_post_row()`).
 
 ## VM 배포 (memo-agent)
 

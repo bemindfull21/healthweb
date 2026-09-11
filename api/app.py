@@ -39,7 +39,7 @@ LOGIN_ID_RE = re.compile(r"^[a-z0-9]{3,20}$")
 JWT_ALG = "HS256"
 JWT_TTL = dt.timedelta(days=7)
 MIN_WEIGHT, MAX_WEIGHT = 20.0, 300.0
-POST_KINDS = {"log", "routine", "reflection", "question"}
+POST_KINDS = {"brag", "resolve", "reflect", "casual"}
 PRIVACY = {"private", "trend", "public"}
 
 MEDIA_DIR = pathlib.Path(os.environ.get("MEDIA_DIR", "media"))
@@ -501,6 +501,7 @@ class PostIn(BaseModel):
 
 class PostPatch(BaseModel):
     body: str
+    kind: Optional[str] = None
 
 
 class ReportIn(BaseModel):
@@ -821,7 +822,7 @@ def add_weight(body: WeightIn, u: dict = Depends(current_user)) -> dict:
     if body.share:
         post_id = insert_id(
             "insert into healthweb.post (login_id, kind, body, weight_entry_id, image_media_id) "
-            "values (:l, 'log', :b, :e, :m) returning id into :new_id",
+            "values (:l, 'casual', :b, :e, :m) returning id into :new_id",
             l=u["login_id"], b=note or "오늘도 기록했어요.", e=entry_id, m=photo,
         )
     _refresh_rank(u["login_id"])
@@ -861,7 +862,7 @@ def _post_row(r: dict) -> dict:
         "avatar": _media_url(r.get("av_path"), r.get("av_thumb")),
         "rank_level": r.get("rank_level"),
     }
-    if r["kind"] == "log" and r.get("weight") is not None and r.get("weight_privacy") == "public":
+    if r.get("weight") is not None and r.get("weight_privacy") == "public":
         out["weight"] = float(r["weight"])
     return out
 
@@ -947,7 +948,13 @@ def edit_post(post_id: int, body: PostPatch, u: dict = Depends(current_user)) ->
     text = body.body.strip()
     if not (1 <= len(text) <= 2000):
         raise HTTPException(400, "본문은 1–2000자입니다")
-    dml("update healthweb.post set body = :b where id = :p", b=text, p=post_id)
+    sets, binds = ["body = :b"], {"b": text, "p": post_id}
+    if body.kind is not None:
+        if body.kind not in POST_KINDS:
+            raise HTTPException(400, "잘못된 글 종류")
+        sets.append("kind = :k")
+        binds["k"] = body.kind
+    dml(f"update healthweb.post set {', '.join(sets)} where id = :p", **binds)
     return {"ok": True}
 
 

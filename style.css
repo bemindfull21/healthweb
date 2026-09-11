@@ -226,7 +226,7 @@ td.q { white-space: normal; color: var(--muted); font-size: .84rem; min-width: 1
 .cmt { color: var(--muted); font-size: .85rem; }
 
 .kind { font-size: .72rem; font-weight: 600; padding: 2px 8px; border-radius: 999px; background: var(--card-2); color: var(--muted); }
-.kind-log { background: var(--accent-soft); color: var(--accent); }
+.kind-brag { background: var(--accent-soft); color: var(--accent); }
 
 .rank-badge { font-size: .68rem; font-weight: 700; padding: 1px 8px; border-radius: 999px; white-space: nowrap; }
 .rank-1 { background: var(--rank-1-soft); color: var(--rank-1); }
@@ -237,7 +237,7 @@ td.q { white-space: normal; color: var(--muted); font-size: .84rem; min-width: 1
 @media (prefers-color-scheme: dark) {
   .rank-5 { background: linear-gradient(135deg, #2e1065, #172554); border-color: #6d28d9; }
 }
-.kind-routine, .kind-reflection, .kind-question { background: var(--social-soft); color: var(--social); }
+.kind-resolve, .kind-reflect, .kind-casual { background: var(--social-soft); color: var(--social); }
 
 .encourage { background: transparent; color: var(--muted); border: 1px solid var(--border); font-size: .85rem; padding: 6px 12px; }
 .encourage.on { background: var(--social-soft); color: var(--social); border-color: transparent; }

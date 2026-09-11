@@ -10,7 +10,7 @@ const TOKEN_KEY = "healthweb.token";
 const ME_KEY = "healthweb.me";
 const BASE = new URL(".", import.meta.url).pathname.replace(/\/$/, "");
 
-const KIND_LABEL = { log: "기록", routine: "루틴", reflection: "회고", question: "질문" };
+const KIND_LABEL = { brag: "자랑", resolve: "결심", reflect: "반성", casual: "그냥" };
 
 // ---------- 딥링크 복원 ----------
 try {
@@ -196,7 +196,7 @@ function PostCard({ post }) {
     </div>
     <p class="post-body">${post.body}</p>
     ${post.image && html`<img class="post-img" src=${post.image.thumb_url || post.image.url} alt="" loading="lazy" />`}
-    ${post.kind === "log" && post.weight != null &&
+    ${post.weight != null &&
       html`<div class="post-weight">${fmtKg(post.weight)} kg</div>`}
     <div class="post-actions">
       <${EncourageBtn} post=${post} />
@@ -542,6 +542,7 @@ function PostView({ id }) {
   const [zoom, setZoom] = useState(false);
   const [editing, setEditing] = useState(false);
   const [editBody, setEditBody] = useState("");
+  const [editKind, setEditKind] = useState("casual");
   const [savingEdit, setSavingEdit] = useState(false);
 
   const load = useCallback(async () => {
@@ -564,13 +565,13 @@ function PostView({ id }) {
     try { await api(`/posts/${id}`, { method: "DELETE" }); bump(); nav("/feed"); toast("삭제했습니다"); }
     catch (e) { toast(e.detail, "err"); }
   };
-  const startEdit = () => { setEditBody(post.body); setEditing(true); };
+  const startEdit = () => { setEditBody(post.body); setEditKind(post.kind); setEditing(true); };
   const saveEdit = async () => {
     const text = editBody.trim();
     if (!text || savingEdit) return;
     setSavingEdit(true);
     try {
-      await api(`/posts/${id}`, { method: "PATCH", body: { body: text } });
+      await api(`/posts/${id}`, { method: "PATCH", body: { body: text, kind: editKind } });
       setEditing(false); toast("수정했습니다"); load(); bump();
     } catch (e) { toast(e.detail, "err"); }
     finally { setSavingEdit(false); }
@@ -618,6 +619,10 @@ function PostView({ id }) {
     </div>
     ${editing
       ? html`<div class="edit-form">
+          <div class="chips">
+            ${Object.entries(KIND_LABEL).map(([k, l]) => html`<button type="button" key=${k}
+              class=${"chip" + (k === editKind ? " on" : "")} onClick=${() => setEditKind(k)}>${l}</button>`)}
+          </div>
           <textarea rows="4" value=${editBody} onInput=${(e) => setEditBody(e.target.value)} maxlength="2000" autofocus></textarea>
           <div class="edit-actions">
             <button class="ghost" onClick=${() => setEditing(false)}>취소</button>
@@ -627,7 +632,7 @@ function PostView({ id }) {
       : html`<p class="post-body full">${post.body}</p>`}
     ${post.image && html`<img class="post-img full" src=${post.image.url} alt=""
       onClick=${() => setZoom(true)} loading="lazy" />`}
-    ${post.kind === "log" && post.weight != null && html`<div class="post-weight big">${fmtKg(post.weight)} kg</div>`}
+    ${post.weight != null && html`<div class="post-weight big">${fmtKg(post.weight)} kg</div>`}
     <div class="post-actions"><${EncourageBtn} post=${post} big=${true} /></div>
     ${zoom && post.image && html`<${Lightbox} src=${post.image.url} onClose=${() => setZoom(false)} />`}
 
@@ -1266,7 +1271,7 @@ function WeightModal({ onClose }) {
 
 function PostModal({ onClose }) {
   const { bump, toast, nav } = useStore();
-  const [kind, setKind] = useState("routine");
+  const [kind, setKind] = useState("casual");
   const [body, setBody] = useState("");
   const [image, setImage] = useState(null);
   const [busy, setBusy] = useState(false);
