@@ -31,6 +31,7 @@
 | GET | `/feed?scope=following\|all&cursor=&limit=` | ✓ | — | 커서 페이지네이션(id 기준), 차단 상호 필터 적용 |
 | POST | `/posts` | ✓ | `kind, body, weight_entry_id?, image_media_id?` | |
 | GET | `/posts/:id` | ✓ | — | 글 상세 + `comments[]`(작성자 아바타 포함) |
+| PATCH | `/posts/:id` | ✓ | `body` | 본인 글만(아니면 404), 본문 1~2000자. `kind`·이미지는 수정 불가 |
 | POST/DELETE | `/posts/:id/encourage` | ✓ | — | 응원 토글, 취소 시 미읽음 알림도 삭제 |
 | POST | `/posts/:id/comments` | ✓ | `body` | |
 | DELETE | `/posts/:id` | ✓ | — | 본인 글만, `_purge_post()`(댓글·응원·알림·고정참조·미디어 GC까지 정리) |

@@ -499,6 +499,10 @@ class PostIn(BaseModel):
     image_media_id: Optional[int] = None
 
 
+class PostPatch(BaseModel):
+    body: str
+
+
 class ReportIn(BaseModel):
     target_kind: str
     target_id: str
@@ -930,6 +934,21 @@ def create_post(body: PostIn, u: dict = Depends(current_user)) -> dict:
         l=u["login_id"], k=body.kind, b=text, e=eid, m=iid,
     )
     return {"id": pid}
+
+
+@app.patch("/posts/{post_id}")
+def edit_post(post_id: int, body: PostPatch, u: dict = Depends(current_user)) -> dict:
+    owned = q1(
+        "select 1 as x from healthweb.post where id = :p and login_id = :l",
+        p=post_id, l=u["login_id"],
+    )
+    if owned is None:
+        raise HTTPException(404, "글을 찾을 수 없습니다")
+    text = body.body.strip()
+    if not (1 <= len(text) <= 2000):
+        raise HTTPException(400, "본문은 1–2000자입니다")
+    dml("update healthweb.post set body = :b where id = :p", b=text, p=post_id)
+    return {"ok": True}
 
 
 @app.get("/posts/{post_id}")

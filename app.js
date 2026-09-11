@@ -540,6 +540,9 @@ function PostView({ id }) {
   const [sending, setSending] = useState(false);
   const [menu, setMenu] = useState(false);
   const [zoom, setZoom] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [editBody, setEditBody] = useState("");
+  const [savingEdit, setSavingEdit] = useState(false);
 
   const load = useCallback(async () => {
     try { setPost(await api(`/posts/${id}`)); setState("ok"); }
@@ -560,6 +563,17 @@ function PostView({ id }) {
     if (!confirm("이 글을 삭제할까요?")) return;
     try { await api(`/posts/${id}`, { method: "DELETE" }); bump(); nav("/feed"); toast("삭제했습니다"); }
     catch (e) { toast(e.detail, "err"); }
+  };
+  const startEdit = () => { setEditBody(post.body); setEditing(true); };
+  const saveEdit = async () => {
+    const text = editBody.trim();
+    if (!text || savingEdit) return;
+    setSavingEdit(true);
+    try {
+      await api(`/posts/${id}`, { method: "PATCH", body: { body: text } });
+      setEditing(false); toast("수정했습니다"); load(); bump();
+    } catch (e) { toast(e.detail, "err"); }
+    finally { setSavingEdit(false); }
   };
   const togglePin = async () => {
     try {
@@ -596,12 +610,21 @@ function PostView({ id }) {
         ${menu && html`<div class="menu-pop">
           ${post.mine
             ? html`<button class="plain" onClick=${() => { setMenu(false); togglePin(); }}>${post.pinned ? "고정 해제" : "프로필에 고정"}</button>
+                   <button class="plain" onClick=${() => { setMenu(false); startEdit(); }}>수정</button>
                    <button onClick=${() => { setMenu(false); delPost(); }}>삭제</button>`
             : html`<button onClick=${report}>신고</button>`}
         </div>`}
       </div>
     </div>
-    <p class="post-body full">${post.body}</p>
+    ${editing
+      ? html`<div class="edit-form">
+          <textarea rows="4" value=${editBody} onInput=${(e) => setEditBody(e.target.value)} maxlength="2000" autofocus></textarea>
+          <div class="edit-actions">
+            <button class="ghost" onClick=${() => setEditing(false)}>취소</button>
+            <button disabled=${!editBody.trim() || savingEdit} onClick=${saveEdit}>저장</button>
+          </div>
+        </div>`
+      : html`<p class="post-body full">${post.body}</p>`}
     ${post.image && html`<img class="post-img full" src=${post.image.url} alt=""
       onClick=${() => setZoom(true)} loading="lazy" />`}
     ${post.kind === "log" && post.weight != null && html`<div class="post-weight big">${fmtKg(post.weight)} kg</div>`}

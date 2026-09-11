@@ -251,6 +251,9 @@ td.q { white-space: normal; color: var(--muted); font-size: .84rem; min-width: 1
 .comment-form input { flex: 1; }
 .comment-form button { flex-shrink: 0; }
 
+.edit-form textarea { width: 100%; }
+.edit-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
+
 /* ============ 프로필 ============ */
 .profile-head { display: flex; gap: 12px; align-items: center; margin-bottom: 12px; }
 .avatar { width: 48px; height: 48px; border-radius: 50%; background: var(--accent-soft); color: var(--accent); display: grid; place-items: center; font-weight: 700; font-size: 1.2rem; flex-shrink: 0; }
