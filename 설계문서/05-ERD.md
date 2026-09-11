@@ -60,7 +60,7 @@ erDiagram
     POST {
         number id PK
         varchar2 login_id FK
-        varchar2 kind "brag/resolve/reflect/casual — 자랑/결심/반성/그냥"
+        varchar2 kind "brag/resolve/reflect/casual — 표시 라벨은 자랑/도전/성찰/그냥"
         varchar2 body
         number weight_entry_id FK "nullable"
         number image_media_id FK "nullable"
@@ -155,7 +155,7 @@ erDiagram
 | `041` | 텔레그램 알림 — `app_user`+`tg_chat_id`, `tg_link_code` |
 | `042` | 관리자 공지 — `announcement` |
 | `043` | 등급 — `app_user`+`rank_score/rank_level`, `notification`+`rank_level`, kind 체크 제약에 `'rank'` 추가 |
-| `044` | 글 종류 재편 — `post.kind` 값 교체(자랑/결심/반성/그냥), 기존 데이터 최선 추정 매핑 |
+| `044` | 글 종류 재편 — `post.kind` 값 교체(brag/resolve/reflect/casual, 표시 라벨 자랑/도전/성찰/그냥), 기존 데이터 최선 추정 매핑 |
 
 ## 알려진 특이사항
 

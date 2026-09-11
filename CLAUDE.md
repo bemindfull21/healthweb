@@ -99,7 +99,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 `sql/011_migrate_owner_weights.sql` — 오너가 가입 후 `<LOGIN_ID>` 바꿔 실행 (구 텔레그램 이력 → weight_entry).
 
 `sql/044_post_kind.sql` (**적용됨** — healthweb 유저): `post.kind` 값 재편 — `log/routine/reflection/question` 폐기 →
-`brag/resolve/reflect/casual`("자랑"/"결심"/"반성"/"그냥"). 기존 데이터는 최선 추정 매핑(log→casual, routine→resolve,
+`brag/resolve/reflect/casual`("자랑"/"도전"/"성찰"/"그냥", 표시 라벨은 `KIND_LABEL`). 기존 데이터는 최선 추정 매핑(log→casual, routine→resolve,
 reflection→reflect, question→casual) 후 체크 제약 교체. 몸무게 공유 글의 weight 노출은 이제 `kind` 무관 —
 `weight_entry_id` 조인 결과(`weight` not null)만 본다(`_post_row()`).
 

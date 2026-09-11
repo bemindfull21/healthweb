@@ -10,7 +10,7 @@ const TOKEN_KEY = "healthweb.token";
 const ME_KEY = "healthweb.me";
 const BASE = new URL(".", import.meta.url).pathname.replace(/\/$/, "");
 
-const KIND_LABEL = { brag: "자랑", resolve: "결심", reflect: "반성", casual: "그냥" };
+const KIND_LABEL = { brag: "자랑", resolve: "도전", reflect: "성찰", casual: "그냥" };
 
 // ---------- 딥링크 복원 ----------
 try {
