@@ -4,14 +4,15 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="color-scheme" content="light dark" />
-  <title>챌린지 · 자기사랑 연습</title>
+  <title>챌린지 · 마이웨이트, 마이러브</title>
   <meta name="description" id="meta-desc" content="함께 지키는 데일리 체크인 챌린지" />
+  <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
   <link rel="stylesheet" href="./style.css" />
 </head>
 <body>
   <main class="wrap landing">
     <div id="c-root"><div class="boot">불러오는 중…</div></div>
-    <p class="muted foot"><a href="./" class="link-sm">← 몸무게 기록 홈</a></p>
+    <p class="muted foot"><a href="./" class="link-sm">← 마이웨이트, 마이러브 홈</a></p>
   </main>
 
   <script src="./config.js"></script>
@@ -40,7 +41,7 @@
     fetch(window.HW.API + "/c/" + id, { cache: "no-store" })
       .then(function (r) { if (!r.ok) throw new Error(); return r.json(); })
       .then(function (c) {
-        document.title = c.title + " · 몸무게 기록";
+        document.title = c.title + " · 마이웨이트, 마이러브";
         document.getElementById("meta-desc").setAttribute(
           "content",
           c.title + " — " + c.member_count + "명이 함께하는 " + c.target_days + "일 데일리 체크인 챌린지"
@@ -58,7 +59,7 @@
             ? '<p class="muted sm">' + c.sample_members.map(esc).join(" · ") + more + " 참여 중</p>"
             : "") +
           '<a class="cta" href="./">가입하고 참여하기</a>' +
-          '<p class="muted sm c-note">몸무게 기록은 추세를 보기 위한 도구입니다. ' +
+          '<p class="muted sm c-note">몸무게 기록은 자기돌봄을 비추는 도구입니다. ' +
           "챌린지는 매일의 루틴을 함께 지키기 위한 것이고요.</p>";
       })
       .catch(function () {

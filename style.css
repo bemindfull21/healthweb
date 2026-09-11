@@ -17,6 +17,7 @@
   --rank-3: #7c3aed; --rank-3-soft: #ede9fe;
   --rank-4: #1d4ed8; --rank-4-soft: #dbeafe;
   --rank-5: #6d28d9; --rank-5-soft: #f5f3ff;
+  --love: #b5486f;
 }
 @media (prefers-color-scheme: dark) {
   :root {
@@ -38,6 +39,7 @@
     --rank-3: #c4b5fd; --rank-3-soft: #3b2f6b;
     --rank-4: #93c5fd; --rank-4-soft: #1e3a63;
     --rank-5: #d8b4fe; --rank-5-soft: #3b1d63;
+    --love: #e08aa8;
   }
 }
 
@@ -82,6 +84,17 @@ button.on { background: var(--accent); color: #fff; }
 .hero h1 { font-size: 1.7rem; }
 .pillars { display: flex; justify-content: center; gap: 8px; margin: 12px 0 0; flex-wrap: wrap; }
 .pill { background: var(--accent-soft); color: var(--accent); font-size: .8rem; font-weight: 600; padding: 4px 12px; border-radius: 999px; }
+
+.hero .wordmark { font-family: "Gowun Batang", serif; font-weight: 700; font-size: 2rem; margin: 0 0 4px; word-break: keep-all; }
+.wordmark .w { color: var(--accent); }
+.wordmark .l { color: var(--love); }
+.wordmark .comma { color: var(--muted); }
+.en-name { font-family: "Fraunces", serif; font-style: italic; font-size: 1rem; color: var(--muted); margin: 0 0 6px; }
+
+.brand-sig { display: flex; justify-content: center; align-items: center; gap: 7px; font-size: .78rem; color: var(--muted); margin: 0 0 10px; }
+.brand-sig .sig-heart { width: 14px; height: 14px; flex-shrink: 0; }
+.brand-sig b.w { color: var(--accent); font-weight: 700; }
+.brand-sig b.l { color: var(--love); font-weight: 700; }
 .foot { text-align: center; margin-top: 20px; }
 
 .auth-card { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 20px; margin-bottom: 34px; }

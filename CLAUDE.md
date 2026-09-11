@@ -6,6 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 # health-web
 
+서비스명 **마이웨이트, 마이러브 (MyWeight, MyLove)** — 2026-09-11 확정 (구 "자기사랑 연습"). 엠블럼은 "결의 하트"
+(보석처럼 깎인 하트, `favicon.svg`). 이름은 랜딩 히어로·브라우저 탭·소개 페이지 하단 서명에만 노출("문 앞에서만").
 자기이해·자기수용·자기돌봄(자기사랑)을 습관으로 만들어가는 사람들의 커뮤니티. 몸무게 기록은 자기돌봄의 상징 + 피드/응원.
 정적 프론트(GitHub Pages `bemindfull21/healthweb`, public) + VM FastAPI.
 
@@ -26,6 +28,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - 라우트: `/feed` · `/challenges`·`/challenges/:id` · `/notifications` · `/me` · `/search` · `/p/:id` · `/u/:handle` · `/settings` · `/admin`(오너 허브)·`/admin/reports`·`/admin/announcements`.
   공개(로그인 불필요): `about.html` · `challenge.html?id=`.
 - 탭바 5개: 피드 · 챌린지 · ＋ · 알림 · 나. ＋ = 액션 시트(몸무게 기록 / 글쓰기 / 챌린지 만들기).
+- **브랜드**: `favicon.svg`(결의 하트, 고정 hex — CSS 변수 미사용) 전 페이지 `<link rel="icon">`. `--love`(rose, style.css 라이트/다크)
+  + 기존 `--accent`(green) 두 색으로 "마이웨이트"/"마이러브" 분리 표기. `.wordmark`(랜딩 히어로, Gowun Batang·Fraunces 구글 폰트)
+  · `.brand-sig`(소개 페이지 하단 서명, 작은 하트+이름). in-app 화면엔 로고 반복 안 함("문 앞에서만" 원칙).
 - 로컬 테스트: `app.js`의 `const API` + `config.js`의 `window.HW.API` 를 `http://127.0.0.1:8971`로 `sed` (테스트 후 `git checkout config.js` + 역치환). 정적은 `python -m http.server 8080`.
   `scratchpad/`에 `test_p1~p3b.py`(전부 통과) · `runserver.sh`(MEDIA env 포함) · `e2e_*.py`(브라우저 데모 데이터, `--clean`). signup 레이트리밋 5/시간이라 스위트마다 서버 재시작.
 
