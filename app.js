@@ -156,25 +156,9 @@ function KindBadge({ kind }) {
 }
 
 const RANK_NAME = { 1: "흑연", 2: "흑요석", 3: "자수정", 4: "사파이어", 5: "다이아몬드" };
-// 등급이 오를수록 뭉툭한 원석 → 깎인 보석으로 형태 자체가 정교해짐 (16px에서도 구분되게 실루엣 대비를 크게)
-const RANK_SHAPE = {
-  2: "M50 8 L88 38 L73 88 L27 88 L12 38 Z",   // 오각형 — 흑요석
-  3: "M50 5 L65 30 L62 90 L38 90 L35 30 Z",   // 세로로 긴 결정 — 자수정
-  4: "M50 8 L92 50 L50 92 L8 50 Z",           // 다이아몬드 외곽선 — 사파이어
-  5: "M20 35 L50 10 L80 35 L50 90 Z",         // 컷팅면까지 보이는 다이아몬드
-};
 function RankBadge({ level }) {
   if (!level) return null;
-  const name = RANK_NAME[level];
-  const color = `var(--rank-${level})`;
-  return html`<svg class="rank-icon" viewBox="0 0 100 100" role="img" aria-label=${name}>
-    <title>${name}</title>
-    ${level === 1
-      ? html`<circle cx="50" cy="50" r="42" fill=${color} />`
-      : html`<path d=${RANK_SHAPE[level]} fill=${color} />`}
-    ${level === 5 && html`<path d="M20 35 L80 35 M50 10 L50 90 M35 22 L50 35 L65 22"
-      stroke="var(--card)" stroke-width="3" fill="none" stroke-linejoin="round" stroke-linecap="round" />`}
-  </svg>`;
+  return html`<span class=${"rank-badge rank-" + level}>${RANK_NAME[level]}</span>`;
 }
 
 function EncourageBtn({ post, big }) {

@@ -12,11 +12,11 @@
   --up: #dc2626;
   --down: #16a34a;
   --error: #b91c1c;
-  --rank-1: #52525b;
-  --rank-2: #4338ca;
-  --rank-3: #7c3aed;
-  --rank-4: #1d4ed8;
-  --rank-5: #6d28d9;
+  --rank-1: #52525b; --rank-1-soft: #e4e4e7;
+  --rank-2: #4338ca; --rank-2-soft: #e0e3fa;
+  --rank-3: #7c3aed; --rank-3-soft: #ede9fe;
+  --rank-4: #1d4ed8; --rank-4-soft: #dbeafe;
+  --rank-5: #6d28d9; --rank-5-soft: #f5f3ff;
   --love: #b5486f;
 }
 @media (prefers-color-scheme: dark) {
@@ -34,11 +34,11 @@
     --up: #f87171;
     --down: #4ade80;
     --error: #f87171;
-    --rank-1: #a1a1aa;
-    --rank-2: #a5b4fc;
-    --rank-3: #c4b5fd;
-    --rank-4: #93c5fd;
-    --rank-5: #d8b4fe;
+    --rank-1: #a1a1aa; --rank-1-soft: #3f3f46;
+    --rank-2: #a5b4fc; --rank-2-soft: #302c5e;
+    --rank-3: #c4b5fd; --rank-3-soft: #3b2f6b;
+    --rank-4: #93c5fd; --rank-4-soft: #1e3a63;
+    --rank-5: #d8b4fe; --rank-5-soft: #3b1d63;
     --love: #e08aa8;
   }
 }
@@ -228,7 +228,15 @@ td.q { white-space: normal; color: var(--muted); font-size: .84rem; min-width: 1
 .kind { font-size: .72rem; font-weight: 600; padding: 2px 8px; border-radius: 999px; background: var(--card-2); color: var(--muted); }
 .kind-log { background: var(--accent-soft); color: var(--accent); }
 
-.rank-icon { width: 15px; height: 15px; vertical-align: -2px; flex-shrink: 0; }
+.rank-badge { font-size: .68rem; font-weight: 700; padding: 1px 8px; border-radius: 999px; white-space: nowrap; }
+.rank-1 { background: var(--rank-1-soft); color: var(--rank-1); }
+.rank-2 { background: var(--rank-2-soft); color: var(--rank-2); }
+.rank-3 { background: var(--rank-3-soft); color: var(--rank-3); }
+.rank-4 { background: var(--rank-4-soft); color: var(--rank-4); }
+.rank-5 { background: linear-gradient(135deg, #fdf4ff, #eff6ff); color: var(--rank-5); border: 1px solid #c4b5fd; }
+@media (prefers-color-scheme: dark) {
+  .rank-5 { background: linear-gradient(135deg, #2e1065, #172554); border-color: #6d28d9; }
+}
 .kind-routine, .kind-reflection, .kind-question { background: var(--social-soft); color: var(--social); }
 
 .encourage { background: transparent; color: var(--muted); border: 1px solid var(--border); font-size: .85rem; padding: 6px 12px; }

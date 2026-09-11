@@ -131,8 +131,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 흑연~다이아몬드 5단계, 광물 강도 은유. `about.html`에 도입 배경(등급=순위 아닌 굳기, 하락 없음) + 산정 기준표 + 등급 구간표 추가.
 프론트: `RankBadge`(`RANK_NAME` 매핑) — `PostCard`·`PostView`(작성자 이름 옆) · `MeView`(`.me-head`) · `ProfileView`(`.phandle`)에 렌더.
 `NotificationsView` 는 `kind==='rank'` 항목을 "🎉 {뱃지} 등급이 되었어요"로 특수 렌더, 클릭 시 `/me`.
-CSS: `--rank-1~5` 토큰(라이트/다크) + `.rank-icon`(15px). `RankBadge`는 텍스트가 아니라 등급별 SVG 실루엣
-(원→오각형→세로 결정→다이아 외곽선→컷팅면 있는 다이아몬드, `RANK_SHAPE`) — 이름은 `<title>`/`aria-label`로만.
+CSS: `--rank-1~5`/`--rank-N-soft` 토큰(라이트/다크) + `.rank-badge`, 다이아몬드만 그라디언트+보더로 차별화.
 
 ## 미완 (Phase 3c+)
 
