@@ -1005,7 +1005,7 @@ function SettingsView() {
       </div>
       <label>아이디 <span class="hint">변경 불가 · 비공개</span>
         <input value=${f.login_id} disabled /></label>
-      <label>이름 <span class="hint">피드·프로필에 표시됨</span>
+      <label>닉네임 <span class="hint">피드·프로필에 표시됨</span>
         <input value=${f.name} onInput=${upd("name")} maxlength="20" /></label>
       <label>소개
         <input value=${f.bio} onInput=${upd("bio")} maxlength="200" placeholder="한 줄 소개" /></label>
