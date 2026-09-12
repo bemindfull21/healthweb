@@ -160,6 +160,12 @@ exp = r[1]["items"][0]
 assert exp["item_name"] == "상품 폐기" and exp["amount_krw"] == 400, exp  # 2개 * 단가200
 stock_pid2 = next(x for x in call("GET", "/stock", token=tok_u)[1]["items"] if x["purchase_item_id"] == pid2)
 assert exp["purchase_no"] == stock_pid2["purchase_no"], (exp, stock_pid2)  # 폐기 대상 구매ID가 비용에 같이 저장됨
+waste_eid = exp["id"]
+
+print("12b) 폐기 비용은 비용 탭에서 직접 삭제 불가 — 판매 목록에서 지우라고 안내")
+r = call("DELETE", f"/expenses/{waste_eid}", token=tok_u)
+show("delete waste expense directly", r)
+assert r[0] == 400 and r[1]["detail"] == "폐기 비용을 삭제하려면 판매 목록에서 폐기판매를 삭제하세요", r
 
 print("13) 폐기 건은 수정 불가")
 r = call("PATCH", f"/sales/{wid}", {"sale_qty": 1, "sale_price_krw": 100}, token=tok_u)

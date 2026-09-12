@@ -145,7 +145,9 @@ nullable). 판매 삭제(`DELETE /sales/:id`) 추가 — 남은 재고가 매번
 연결된 비용까지 있어 부분 수정을 허용하면 상태가 어긋남. `DELETE /sales/:id`가 `is_waste=1`이면 연결된 `expense_item`도 같이 지움.
 **버그 수정**: `DELETE /purchases/:id`가 판매 이력이 있는 건을 지우려 하면 `sale_item.purchase_item_id` FK 제약 위반으로 원인 불명
 오류가 났었음(프론트엔 "서버에 연결하지 못했습니다"로 표시) — 삭제 전에 `sale_item` 참조 여부를 먼저 확인해 400
-"판매 이력이 있어 삭제할 수 없습니다"로 명확하게 응답하도록 수정.
+"판매 이력이 있어 삭제할 수 없습니다"로 명확하게 응답하도록 수정. **같은 종류의 버그가 `DELETE /expenses/:id`에도 있었음**
+(폐기 판매가 자동 생성한 비용을 지우려 하면 `sale_item.expense_item_id` FK 위반) — 동일한 패턴으로 삭제 전에 참조 확인 후 400
+"폐기 비용을 삭제하려면 판매 목록에서 폐기판매를 삭제하세요"로 수정(2026-09-13).
 
 `sql/052_expense_purchase.sql` (**적용됨** — healthweb 유저): `expense_item` +`purchase_item_id`(→purchase_item, nullable).
 비용 등록(`POST /expenses`)에 관련 구매ID 지정을 필수로 만듦 — 본인 소유 구매건이 아니면 400. 컬럼 자체는 nullable로 둔 이유는

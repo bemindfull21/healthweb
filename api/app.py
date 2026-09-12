@@ -2292,9 +2292,13 @@ def update_expense(eid: int, body: ExpensePatchIn, u: dict = Depends(current_use
 @app.delete("/expenses/{eid}")
 def delete_expense(eid: int, u: dict = Depends(current_user)) -> dict:
     require_erp(u)
-    n = dml("delete from healthweb.expense_item where id = :i and login_id = :l", i=eid, l=u["login_id"])
-    if not n:
+    row = q1("select 1 x from healthweb.expense_item where id = :i and login_id = :l", i=eid, l=u["login_id"])
+    if row is None:
         raise HTTPException(404, "없는 기록입니다")
+    has_sale = q1("select 1 x from healthweb.sale_item where expense_item_id = :i and rownum = 1", i=eid)
+    if has_sale:
+        raise HTTPException(400, "폐기 비용을 삭제하려면 판매 목록에서 폐기판매를 삭제하세요")
+    dml("delete from healthweb.expense_item where id = :i and login_id = :l", i=eid, l=u["login_id"])
     return {"ok": True}
 
 
