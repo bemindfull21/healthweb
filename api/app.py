@@ -587,6 +587,7 @@ class ExpenseIn(BaseModel):
     expense_date: str
     item_name: str
     amount_krw: float
+    purchase_item_id: int
 
 
 class ExpensePatchIn(BaseModel):
@@ -2235,10 +2236,16 @@ def create_expense(body: ExpenseIn, u: dict = Depends(current_user)) -> dict:
     item_name = body.item_name.strip()[:200]
     if not item_name:
         raise HTTPException(400, "비용항목을 입력해 주세요")
+    prow = q1(
+        "select 1 x from healthweb.purchase_item where id = :pid and login_id = :l",
+        pid=body.purchase_item_id, l=u["login_id"],
+    )
+    if prow is None:
+        raise HTTPException(400, "구매ID를 선택해 주세요")
     eid = insert_id(
-        "insert into healthweb.expense_item (login_id, expense_date, item_name, amount_krw) "
-        "values (:l, :d, :n, :a) returning id into :new_id",
-        l=u["login_id"], d=expense_date, n=item_name, a=body.amount_krw,
+        "insert into healthweb.expense_item (login_id, expense_date, item_name, amount_krw, purchase_item_id) "
+        "values (:l, :d, :n, :a, :pid) returning id into :new_id",
+        l=u["login_id"], d=expense_date, n=item_name, a=body.amount_krw, pid=body.purchase_item_id,
     )
     return {"id": eid}
 
@@ -2248,23 +2255,25 @@ def list_expenses(
     u: dict = Depends(current_user), date_from: Optional[str] = None, date_to: Optional[str] = None,
 ) -> dict:
     require_erp(u)
-    conds = ["login_id = :l"]
+    conds = ["e.login_id = :l"]
     binds: dict = {"l": u["login_id"]}
     if date_from:
-        conds.append("expense_date >= :df"); binds["df"] = date_from
+        conds.append("e.expense_date >= :df"); binds["df"] = date_from
     if date_to:
-        conds.append("expense_date <= :dt"); binds["dt"] = date_to
+        conds.append("e.expense_date <= :dt"); binds["dt"] = date_to
     where = " and ".join(conds)
     rows = qall(
-        f"select id, expense_date, item_name, amount_krw, created_at from healthweb.expense_item "
-        f"where {where} order by expense_date desc, id desc",
+        f"select e.id, e.expense_date, e.item_name, e.amount_krw, e.created_at, p.purchase_no "
+        f"from healthweb.expense_item e left join healthweb.purchase_item p on p.id = e.purchase_item_id "
+        f"where {where} order by e.expense_date desc, e.id desc",
         **binds,
     )
     items = [{
         "id": r["id"], "expense_date": r["expense_date"], "item_name": r["item_name"],
         "amount_krw": float(r["amount_krw"]), "created_at": iso_z(r["created_at"]),
+        "purchase_no": r["purchase_no"],
     } for r in rows]
-    total = q1(f"select sum(amount_krw) s from healthweb.expense_item where {where}", **binds)
+    total = q1(f"select sum(e.amount_krw) s from healthweb.expense_item e where {where}", **binds)
     return {"items": items, "total_krw": float(total["s"]) if total and total["s"] is not None else 0}
 
 
@@ -2296,9 +2305,10 @@ def list_stock(u: dict = Depends(current_user)) -> dict:
     require_erp(u)
     rows = qall(
         "select * from ("
-        "  select p.id, p.purchase_no, p.product_name, p.quantity, p.unit_price_krw, "
+        "  select p.id, p.purchase_no, p.product_name, p.quantity, p.unit_price_krw, m.path thumb_path, "
         "         p.quantity - coalesce(s.sold, 0) as remaining_qty "
         "  from healthweb.purchase_item p "
+        "  left join healthweb.media m on m.id = p.thumb_media_id "
         "  left join (select purchase_item_id, sum(sale_qty) sold from healthweb.sale_item group by purchase_item_id) s "
         "    on s.purchase_item_id = p.id "
         "  where p.login_id = :l and p.received = 1"
@@ -2312,6 +2322,7 @@ def list_stock(u: dict = Depends(current_user)) -> dict:
         "remaining_amount_krw": (
             float(r["unit_price_krw"]) * r["remaining_qty"] if r["unit_price_krw"] is not None else None
         ),
+        "thumb_url": _media_url(r["thumb_path"])["url"] if r["thumb_path"] else None,
     } for r in rows]
     return {"items": items}
 
@@ -2358,9 +2369,9 @@ def save_sales(body: SaleSaveIn, u: dict = Depends(current_user)) -> dict:
             unit_price = float(row["unit_price_krw"]) if row["unit_price_krw"] is not None else 0.0
             waste_amount = round(unit_price * it.sale_qty, 0)
             eid = insert_id(
-                "insert into healthweb.expense_item (login_id, expense_date, item_name, amount_krw) "
-                "values (:l, :d, '상품 폐기', :a) returning id into :new_id",
-                l=u["login_id"], d=sale_date, a=waste_amount,
+                "insert into healthweb.expense_item (login_id, expense_date, item_name, amount_krw, purchase_item_id) "
+                "values (:l, :d, '상품 폐기', :a, :pid) returning id into :new_id",
+                l=u["login_id"], d=sale_date, a=waste_amount, pid=it.purchase_item_id,
             )
             dml("update healthweb.sale_item set expense_item_id = :e where id = :i", e=eid, i=sid)
         ids.append(sid)
@@ -2381,8 +2392,9 @@ def list_sales(
     where = " and ".join(conds)
     rows = qall(
         f"select s.id, s.sale_date, s.sale_qty, s.sale_price_krw, s.sale_amount_krw, s.is_waste, "
-        f"p.purchase_no, p.product_name "
+        f"p.purchase_no, p.product_name, m.path thumb_path "
         f"from healthweb.sale_item s join healthweb.purchase_item p on p.id = s.purchase_item_id "
+        f"left join healthweb.media m on m.id = p.thumb_media_id "
         f"where {where} order by s.sale_date desc, s.id desc",
         **binds,
     )
@@ -2390,6 +2402,7 @@ def list_sales(
         "id": r["id"], "sale_date": r["sale_date"], "purchase_no": r["purchase_no"], "product_name": r["product_name"],
         "sale_qty": r["sale_qty"], "sale_price_krw": float(r["sale_price_krw"]),
         "sale_amount_krw": float(r["sale_amount_krw"]), "is_waste": bool(r["is_waste"]),
+        "thumb_url": _media_url(r["thumb_path"])["url"] if r["thumb_path"] else None,
     } for r in rows]
     total = q1(f"select sum(s.sale_amount_krw) t from healthweb.sale_item s where {where}", **binds)
     return {"items": items, "total_krw": float(total["t"]) if total and total["t"] is not None else 0}

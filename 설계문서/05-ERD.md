@@ -1,6 +1,6 @@
 # ERD — `healthweb` 스키마
 
-Oracle Autonomous DB(SHINDB), `healthweb` 전용 유저로 접속. 마이그레이션 파일: `sql/010`~`sql/051` (순서대로 적용).
+Oracle Autonomous DB(SHINDB), `healthweb` 전용 유저로 접속. 마이그레이션 파일: `sql/010`~`sql/052` (순서대로 적용).
 `BLOCK`·`COMMENT`가 Oracle 예약어라 테이블명은 `user_block`·`post_comment`를 쓴다.
 
 ```mermaid
@@ -31,6 +31,7 @@ erDiagram
     PURCHASE_ITEM }o--o| MEDIA : "AI 크롭 상품 사진(thumb_media_id)"
     PURCHASE_ITEM ||--o{ SALE_ITEM : "판매된다(purchase_item_id)"
     SALE_ITEM }o--o| EXPENSE_ITEM : "폐기 시 자동 생성한 비용(expense_item_id, is_waste=1일 때만)"
+    PURCHASE_ITEM ||--o{ EXPENSE_ITEM : "관련 비용이 발생한다(purchase_item_id, 신규 등록은 필수)"
 
     WEIGHT_ENTRY ||--o| POST : "글로 공유될 수 있다"
     WEIGHT_ENTRY }o--o| MEDIA : "진행 사진(photo_media_id)"
@@ -152,6 +153,7 @@ erDiagram
         varchar2 expense_date "YYYY-MM-DD, 필수"
         varchar2 item_name "비용항목"
         number amount_krw "비용(원화)"
+        number purchase_item_id FK "관련 구매ID. 컬럼은 nullable(옛 데이터 호환)이지만 신규 등록 API는 필수로 검증"
         timestamp created_at
     }
     SALE_ITEM {
@@ -211,6 +213,7 @@ erDiagram
 | `049` | ERP 비용 — `expense_item` 신설(login_id·expense_date·item_name·amount_krw) |
 | `050` | ERP 재고/판매 — `sale_item` 신설(login_id·purchase_item_id·sale_date·sale_qty·sale_price_krw·sale_amount_krw). 남은 재고는 컬럼으로 안 두고 `purchase_item.quantity - sum(sale_item.sale_qty)`로 매번 계산 |
 | `051` | ERP 판매 삭제/재고 폐기 — `sale_item` +`is_waste`(0/1, 기본 0) +`expense_item_id`(→expense_item, nullable). 폐기 판매는 매출·구매원가 계산에서 빠지고 대신 `expense_item`에 "상품 폐기" 비용으로 자동 기록됨 |
+| `052` | ERP 비용-구매ID 연결 — `expense_item` +`purchase_item_id`(→purchase_item, nullable — 신규 등록은 API에서 필수로 검증) |
 
 ## 알려진 특이사항
 

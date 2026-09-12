@@ -1271,7 +1271,8 @@ function ErpExpenseView() {
   const weekAgoStr = weekAgo.toISOString().slice(0, 10);
   const [dateFrom, setDateFrom] = useState(weekAgoStr);
   const [dateTo, setDateTo] = useState(todayStr);
-  const [form, setForm] = useState({ expense_date: todayStr, item_name: "", amount_krw: "" });
+  const [form, setForm] = useState({ expense_date: todayStr, item_name: "", amount_krw: "", purchase_item_id: "" });
+  const [recentPurchases, setRecentPurchases] = useState([]);
 
   const load = useCallback(async () => {
     try {
@@ -1285,16 +1286,31 @@ function ErpExpenseView() {
   }, [dateFrom, dateTo]);
   useEffect(() => { load(); }, [load]);
 
+  useEffect(() => {
+    const monthAgo = new Date(); monthAgo.setMonth(monthAgo.getMonth() - 1);
+    const monthAgoStr = monthAgo.toISOString().slice(0, 10);
+    api(`/purchases?date_from=${monthAgoStr}&limit=100`)
+      .then((d) => setRecentPurchases(d.items || []))
+      .catch(() => setRecentPurchases([]));
+  }, []);
+
   const add = async () => {
     const item_name = form.item_name.trim();
     if (!form.expense_date) return toast("비용발생일자를 입력해 주세요", "err");
     if (!item_name) return toast("비용항목을 입력해 주세요", "err");
     const amount = Number(form.amount_krw);
     if (!amount) return toast("비용을 입력해 주세요", "err");
+    if (!form.purchase_item_id) return toast("관련 구매ID를 선택해 주세요", "err");
     setSaving(true);
     try {
-      await api("/expenses", { method: "POST", body: { expense_date: form.expense_date, item_name, amount_krw: amount } });
-      setForm({ expense_date: form.expense_date, item_name: "", amount_krw: "" });
+      await api("/expenses", {
+        method: "POST",
+        body: {
+          expense_date: form.expense_date, item_name, amount_krw: amount,
+          purchase_item_id: Number(form.purchase_item_id),
+        },
+      });
+      setForm({ expense_date: form.expense_date, item_name: "", amount_krw: "", purchase_item_id: "" });
       toast("저장했습니다");
       load();
     } catch (e) { toast(e.detail, "err"); }
@@ -1322,6 +1338,10 @@ function ErpExpenseView() {
     <div class="panel">
       <div class="erp-row-fields expense-form">
         <input type="date" value=${form.expense_date} onInput=${(e) => setForm({ ...form, expense_date: e.target.value })} />
+        <select value=${form.purchase_item_id} onChange=${(e) => setForm({ ...form, purchase_item_id: e.target.value })}>
+          <option value="">구매ID 선택 (필수)</option>
+          ${recentPurchases.map((p) => html`<option value=${p.id} key=${p.id}>${p.purchase_no} · ${p.product_name}</option>`)}
+        </select>
         <input placeholder="비용항목" value=${form.item_name} onInput=${(e) => setForm({ ...form, item_name: e.target.value })} />
         <input type="number" placeholder="₩" value=${form.amount_krw} onInput=${(e) => setForm({ ...form, amount_krw: e.target.value })} />
       </div>
@@ -1344,7 +1364,7 @@ function ErpExpenseView() {
         : items.map((x) => html`<div class="erp-item" key=${x.id}>
             <div class="erp-item-main">
               <b>${x.item_name}</b>
-              <div class="muted sm">${x.expense_date}</div>
+              <div class="muted sm">${x.purchase_no || ""}${x.purchase_no ? " · " : ""}${x.expense_date}</div>
             </div>
             <input type="number" class="expense-amount" value=${x.amount_krw}
               onBlur=${(e) => updAmount(x, e.target.value)} />
@@ -1412,6 +1432,9 @@ function ErpStockView() {
                 <input type="checkbox" checked=${!!s.checked}
                   onInput=${(e) => setRow(it.purchase_item_id, { checked: e.target.checked })} />
               </label>
+              ${it.thumb_url
+                ? html`<img class="erp-thumb" src=${it.thumb_url} alt="" />`
+                : html`<div class="erp-thumb erp-thumb-empty"></div>`}
               <div class="erp-item-main">
                 <b>${it.product_name}</b>
                 <div class="muted sm">${it.purchase_no} · 재고 ${it.remaining_qty} · 개당 ₩${Math.round(it.unit_price_krw || 0).toLocaleString()}</div>
@@ -1493,6 +1516,9 @@ function ErpSalesView() {
       : items.length === 0
         ? html`<div class="empty">판매 내역이 없어요.</div>`
         : items.map((x) => html`<div class="erp-item" key=${x.id}>
+            ${x.thumb_url
+              ? html`<img class="erp-thumb" src=${x.thumb_url} alt="" />`
+              : html`<div class="erp-thumb erp-thumb-empty"></div>`}
             <div class="erp-item-main">
               <b>${x.product_name}</b>${x.is_waste && html` <span class="waste-badge">폐기</span>`}
               <div class="muted sm">${x.purchase_no} · ${x.sale_date}</div>

@@ -56,7 +56,7 @@ r = call("POST", "/sales", {"sale_date": "2026-08-15", "items": [
     {"purchase_item_id": pid, "sale_qty": 3, "sale_price_krw": 2000},
 ]}, token=tok_u)
 show("sale", r); assert r[0] == 200
-r = call("POST", "/expenses", {"expense_date": "2026-08-20", "item_name": "포장비", "amount_krw": 5000}, token=tok_u)
+r = call("POST", "/expenses", {"expense_date": "2026-08-20", "item_name": "포장비", "amount_krw": 5000, "purchase_item_id": pid}, token=tok_u)
 show("expense", r); assert r[0] == 200
 
 print("3) 9월엔 판매 1개만(개당₩2500), 비용 없음")

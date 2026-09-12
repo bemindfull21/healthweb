@@ -538,7 +538,7 @@ img.avatar { object-fit: cover; display: block; }
 .erp-item-main { flex: 1; min-width: 0; }
 .erp-item-price { text-align: right; flex-shrink: 0; font-variant-numeric: tabular-nums; }
 
-.expense-form { grid-template-columns: 1fr 1fr 1fr; margin-bottom: 8px; }
+.expense-form { grid-template-columns: 1fr 1fr; margin-bottom: 8px; }
 .expense-amount {
   width: 100px; flex-shrink: 0; text-align: right; margin: 0;
   font-variant-numeric: tabular-nums;

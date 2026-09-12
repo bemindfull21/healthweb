@@ -63,6 +63,7 @@ item = next(x for x in r[1]["items"] if x["purchase_item_id"] == pid)
 assert item["remaining_qty"] == 10, item
 assert item["unit_price_krw"] == 100, item
 assert item["remaining_amount_krw"] == 1000, item
+assert "thumb_url" in item and item["thumb_url"] is None, item  # 썸네일 없는 구매 건은 null
 
 print("3) 재고 수량 초과 판매 거부")
 r = call("POST", "/sales", {"sale_date": "2026-09-05", "items": [
@@ -85,6 +86,7 @@ r = call("GET", "/sales?date_from=2026-09-05&date_to=2026-09-05", token=tok_u)
 show("sales list", r); assert r[0] == 200 and len(r[1]["items"]) == 1
 row = r[1]["items"][0]
 assert row["sale_qty"] == 3 and row["sale_price_krw"] == 150 and row["sale_amount_krw"] == 450, row
+assert "thumb_url" in row and row["thumb_url"] is None, row
 assert row["product_name"] == "테스트상품" and row["purchase_no"], row
 assert r[1]["total_krw"] == 450, r[1]
 
@@ -156,6 +158,8 @@ r = call("GET", "/expenses?date_from=2026-09-08&date_to=2026-09-08", token=tok_u
 show("waste expense", r); assert r[0] == 200 and len(r[1]["items"]) == 1
 exp = r[1]["items"][0]
 assert exp["item_name"] == "상품 폐기" and exp["amount_krw"] == 400, exp  # 2개 * 단가200
+stock_pid2 = next(x for x in call("GET", "/stock", token=tok_u)[1]["items"] if x["purchase_item_id"] == pid2)
+assert exp["purchase_no"] == stock_pid2["purchase_no"], (exp, stock_pid2)  # 폐기 대상 구매ID가 비용에 같이 저장됨
 
 print("13) 폐기 건은 수정 불가")
 r = call("PATCH", f"/sales/{wid}", {"sale_qty": 1, "sale_price_krw": 100}, token=tok_u)
