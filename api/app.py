@@ -583,6 +583,16 @@ class PurchasePatchIn(BaseModel):
     received: bool
 
 
+class ExpenseIn(BaseModel):
+    expense_date: str
+    item_name: str
+    amount_krw: float
+
+
+class ExpensePatchIn(BaseModel):
+    amount_krw: float
+
+
 # ---------- 헬스체크 ----------
 
 @app.get("/healthz")
@@ -2191,4 +2201,69 @@ def delete_purchase(pid: int, u: dict = Depends(current_user)) -> dict:
     dml("delete from healthweb.purchase_item where id = :i", i=pid)
     _gc_media(row["source_media_id"])
     _gc_media(row["thumb_media_id"])
+    return {"ok": True}
+
+
+# ---------- ERP: 비용 ----------
+
+@app.post("/expenses")
+def create_expense(body: ExpenseIn, u: dict = Depends(current_user)) -> dict:
+    require_erp(u)
+    expense_date = body.expense_date.strip()
+    if not expense_date:
+        raise HTTPException(400, "비용발생일자를 입력해 주세요")
+    item_name = body.item_name.strip()[:200]
+    if not item_name:
+        raise HTTPException(400, "비용항목을 입력해 주세요")
+    eid = insert_id(
+        "insert into healthweb.expense_item (login_id, expense_date, item_name, amount_krw) "
+        "values (:l, :d, :n, :a) returning id into :new_id",
+        l=u["login_id"], d=expense_date, n=item_name, a=body.amount_krw,
+    )
+    return {"id": eid}
+
+
+@app.get("/expenses")
+def list_expenses(
+    u: dict = Depends(current_user), date_from: Optional[str] = None, date_to: Optional[str] = None,
+) -> dict:
+    require_erp(u)
+    conds = ["login_id = :l"]
+    binds: dict = {"l": u["login_id"]}
+    if date_from:
+        conds.append("expense_date >= :df"); binds["df"] = date_from
+    if date_to:
+        conds.append("expense_date <= :dt"); binds["dt"] = date_to
+    where = " and ".join(conds)
+    rows = qall(
+        f"select id, expense_date, item_name, amount_krw, created_at from healthweb.expense_item "
+        f"where {where} order by expense_date desc, id desc",
+        **binds,
+    )
+    items = [{
+        "id": r["id"], "expense_date": r["expense_date"], "item_name": r["item_name"],
+        "amount_krw": float(r["amount_krw"]), "created_at": iso_z(r["created_at"]),
+    } for r in rows]
+    total = q1(f"select sum(amount_krw) s from healthweb.expense_item where {where}", **binds)
+    return {"items": items, "total_krw": float(total["s"]) if total and total["s"] is not None else 0}
+
+
+@app.patch("/expenses/{eid}")
+def update_expense(eid: int, body: ExpensePatchIn, u: dict = Depends(current_user)) -> dict:
+    require_erp(u)
+    n = dml(
+        "update healthweb.expense_item set amount_krw = :a where id = :i and login_id = :l",
+        a=body.amount_krw, i=eid, l=u["login_id"],
+    )
+    if not n:
+        raise HTTPException(404, "없는 기록입니다")
+    return {"ok": True}
+
+
+@app.delete("/expenses/{eid}")
+def delete_expense(eid: int, u: dict = Depends(current_user)) -> dict:
+    require_erp(u)
+    n = dml("delete from healthweb.expense_item where id = :i and login_id = :l", i=eid, l=u["login_id"])
+    if not n:
+        raise HTTPException(404, "없는 기록입니다")
     return {"ok": True}

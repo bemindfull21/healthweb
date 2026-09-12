@@ -41,10 +41,11 @@ cp .env.example .env   # HEALTHWEB_DB_PASSWORD 등 값 채우기 (.env는 git �
 | `test_edit.py` | 글 수정(`PATCH /posts/:id`) 본문/권한/유효성 |
 | `test_kind.py` | 글 종류(자랑/도전/성찰/그냥) 검증 + 수정 시 종류 변경 |
 | `test_erp.py` | ERP 권한 게이팅, 오너 부여/회수, 영수증 업로드+Gemini 추출(실제 API 호출, 한국어 번역+수량+상품 사진 썸네일 크롭+금액 총액/단가 계산), 저장(구매ID 채번)/목록/합계/삭제+미디어 GC, 입고 체크(PATCH)+미입고만 조회, 구매일자 기간 필터 |
+| `test_expense.py` | ERP 비용 권한 게이팅, 등록/빈 값 거부, 기간 조회+합계, 금액 수정(PATCH)/존재하지 않는 기록 404, 타 사용자 수정·삭제 불가(404), 삭제 |
 
 ## 배포 전 회귀 체크리스트
 
 1. `node --check ../app.js` / `python -m py_compile ../api/app.py`
-2. 위 10개 스위트 전부 통과(스위트 사이 재시작)
+2. 위 11개 스위트 전부 통과(스위트 사이 재시작)
 3. 프론트 UI 변경이 있으면 브라우저로 직접 확인 — 자동화된 프론트 테스트는 없음
 4. `select login_id, name from healthweb.app_user`로 테스트 계정이 안 남았는지 최종 확인

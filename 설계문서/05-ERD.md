@@ -24,6 +24,7 @@ erDiagram
     APP_USER ||--o| MEDIA : "아바타로 쓴다(avatar_media_id)"
     APP_USER ||--o| TG_LINK_CODE : "발급받는다"
     APP_USER ||--o{ PURCHASE_ITEM : "구매 기록한다(erp_access 부여자만)"
+    APP_USER ||--o{ EXPENSE_ITEM : "비용 기록한다(erp_access 부여자만)"
 
     PURCHASE_ITEM }o--o| MEDIA : "영수증 원본(source_media_id)"
     PURCHASE_ITEM }o--o| MEDIA : "AI 크롭 상품 사진(thumb_media_id)"
@@ -142,6 +143,14 @@ erDiagram
         number received "0/1, 기본 0 — 입고 체크"
         timestamp created_at
     }
+    EXPENSE_ITEM {
+        number id PK
+        varchar2 login_id FK
+        varchar2 expense_date "YYYY-MM-DD, 필수"
+        varchar2 item_name "비용항목"
+        number amount_krw "비용(원화)"
+        timestamp created_at
+    }
     REPORT {
         number id PK
         varchar2 reporter FK
@@ -184,6 +193,7 @@ erDiagram
 | `046` | ERP 상품 사진 — `purchase_item`+`thumb_media_id`, `media.kind` 체크 제약에 `'item_thumb'` 추가 |
 | `047` | ERP 입고 체크 — `purchase_item`+`received`(0/1, 기본 0) + 인덱스(login_id, received) |
 | `048` | ERP 구매ID — `purchase_item`+`purchase_no`(YYYYMMDD-NNN, (login_id,purchase_no) UNIQUE)+`unit_price_krw`. 기존 1건 백필. `price_cny`/`price_krw`를 "단가×환율"에서 "단가×수량×환율(총액)"로 의미 수정 |
+| `049` | ERP 비용 — `expense_item` 신설(login_id·expense_date·item_name·amount_krw) |
 
 ## 알려진 특이사항
 

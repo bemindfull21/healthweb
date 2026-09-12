@@ -122,6 +122,10 @@
 | GET | `/purchases?cursor=&limit=&date_from=&date_to=&unreceived_only=` | ✓(erp_access) | — | 커서 페이지네이션(id desc). `unreceived_only=true` 면 기간 무시하고 `received=0`인 항목 전체. 아니면 `date_from`/`date_to`(YYYY-MM-DD, `coalesce(order_date, created_at 날짜)` 기준, 둘 다 생략 시 무제한)로 필터. 전체 합계 `total_krw`·`total_cny`는 현재 필터 범위 기준. 각 item 에 `purchase_no`·`unit_price_krw`·`thumb_url`·`received`(bool) |
 | PATCH | `/purchases/:id` | ✓(erp_access) | `received: bool` | 입고 체크/해제. 본인 기록만(아니면 404) |
 | DELETE | `/purchases/:id` | ✓(erp_access) | — | 본인 기록만(아니면 404), 원본 영수증·상품 썸네일 미디어 모두 GC |
+| POST | `/expenses` | ✓(erp_access) | `expense_date, item_name, amount_krw` | `expense_date`·`item_name`(공백 제거 후) 필수, 비면 400. `{id}` 반환 |
+| GET | `/expenses?date_from=&date_to=` | ✓(erp_access) | — | `expense_date` 기준 기간 필터(둘 다 생략 시 전체). `expense_date desc, id desc` 정렬. `{items:[...], total_krw}` |
+| PATCH | `/expenses/:id` | ✓(erp_access) | `amount_krw: float` | 금액 수정. 본인 기록만(아니면 404) |
+| DELETE | `/expenses/:id` | ✓(erp_access) | — | 본인 기록만(아니면 404) |
 
 ## 기타
 

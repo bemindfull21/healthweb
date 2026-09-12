@@ -127,6 +127,9 @@ reflection→reflect, question→casual) 후 체크 제약 교체. 몸무게 공
 그 총액을 다시 수량으로 나눈 값(`round(price_krw/quantity)`). 구매ID는 `POST /purchases` 저장 시 `login_id`+`order_date` 안에서
 저장 순서대로 채번(동시 저장 시 드물게 경합 가능 — 개인용 툴이라 감수).
 
+`sql/049_expense.sql` (**적용됨** — healthweb 유저): `expense_item`(login_id·expense_date·item_name·amount_krw) 신설.
+ERP "비용" 탭 — `POST/GET/PATCH/DELETE /expenses`, `purchase_item`과 동일하게 `erp_access` 게이팅 + 본인 기록만 수정/삭제(아니면 404).
+
 ## VM 배포 (memo-agent)
 
 - `/opt/health-web-api/` : `healthweb-api.service`(uvicorn :8000) + `caddy.service`(`healthweb21.duckdns.org`).
@@ -167,7 +170,7 @@ CSS: `--rank-1~5`/`--rank-N-soft` 토큰(라이트/다크) + `.rank-badge`, 다�
 타오바오 등 주문내역 스크린샷 → Gemini 비전으로 상품·위안화 가격 자동 추출 → 위안화+원화(무료 환율 API, `open.er-api.com`) 저장.
 커뮤니티 핵심 기능과 무관한 **오너 지정 개인 유틸리티** — 오너가 `ProfileView` ⋯메뉴에서 사용자별로 `erp_access` 켜고 끔.
 탭바는 `me.erp_access` 가 true 인 사용자에게만 6번째 "ERP" 탭 노출(`.tabbar-6`), 나머지는 기존 5개.
-프론트: `ErpView`(`app.js`) — 상단 서브메뉴 "구매/재고/판매/정산"(`.seg`, 순차 구현 예정 — 현재 구매만 동작, 나머지는 준비 중 안내).
+프론트: `ErpView`(`app.js`) — 상단 서브메뉴 "구매/비용/재고/판매/손익"(`.seg`, 순차 구현 예정 — 현재 구매·비용만 동작, 나머지는 준비 중 안내).
 `ErpPurchaseView` = 영수증 업로드(`ImageUpload kind="receipt"`) → `/purchases/extract` 호출 → 추출 결과 편집 가능한 표
 (사진 썸네일·상점·상품명·옵션·수량·¥·₩) → **주문일 입력(필수, 미입력 시 저장 버튼 비활성 + 서버도 400)** → 저장 → 조회 필터
 (시작일·종료일, 기본값 최근 7일 — 프론트가 로컬 타임존 기준으로 계산해 채움 · "미입고만 보기" 체크 시 기간 무시하고 `received=0`인
@@ -177,6 +180,10 @@ CSS: `--rank-1~5`/`--rank-N-soft` 토큰(라이트/다크) + `.rank-badge`, 다�
 텍스트 없는 이미지는 `{"items": []}` 응답 — 추출 실패가 아니라 정상 케이스로 처리. 수량은 `_parse_qty()`가 정수/실수/"2개"처럼
 단위 붙은 문자열까지 최대한 살려서 파싱(Gemini가 순수 정수가 아닌 값을 줄 때가 있어 문자열 `isdigit()` 검사만으로는 놓쳤었음).
 `price_cny`/`price_krw`는 총액(단가×수량×환율), `unit_price_krw`(단가원화)는 그 총액/수량 — `sql/048_purchase_no.sql` 참고.
+
+`ErpExpenseView` = 등록 폼(일자·항목·₩, "추가" 버튼) → 기간 필터(시작일·종료일, 기본값 최근 7일, 필터 바뀌면 자동 재조회) →
+누적 목록(항목명·일자, 금액 입력칸은 `onBlur`에 바뀐 값만 `PATCH /expenses/:id`로 저장 — 구매 탭의 입고 체크박스처럼 별도
+저장 버튼 없이 즉시 저장하는 패턴 재사용) · 개별 삭제(✕ + `confirm()`).
 
 ## 미완 (Phase 3c+)
 

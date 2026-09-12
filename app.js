@@ -1072,14 +1072,16 @@ function ErpView() {
   return html`<div class="view erp">
     <div class="seg erp-menu">
       <button class=${tab === "purchase" ? "on" : ""} onClick=${() => setTab("purchase")}>구매</button>
+      <button class=${tab === "expense" ? "on" : ""} onClick=${() => setTab("expense")}>비용</button>
       <button class=${tab === "stock" ? "on" : ""} onClick=${() => setTab("stock")}>재고</button>
       <button class=${tab === "sales" ? "on" : ""} onClick=${() => setTab("sales")}>판매</button>
-      <button class=${tab === "settle" ? "on" : ""} onClick=${() => setTab("settle")}>정산</button>
+      <button class=${tab === "profit" ? "on" : ""} onClick=${() => setTab("profit")}>손익</button>
     </div>
     ${tab === "purchase" && html`<${ErpPurchaseView} />`}
+    ${tab === "expense" && html`<${ErpExpenseView} />`}
     ${tab === "stock" && html`<div class="empty">재고 기능은 준비 중이에요.</div>`}
     ${tab === "sales" && html`<div class="empty">판매 기능은 준비 중이에요.</div>`}
-    ${tab === "settle" && html`<div class="empty">정산 기능은 준비 중이에요.</div>`}
+    ${tab === "profit" && html`<div class="empty">손익 기능은 준비 중이에요.</div>`}
   </div>`;
 }
 
@@ -1252,6 +1254,101 @@ function ErpPurchaseView() {
               <input type="checkbox" checked=${p.received} onInput=${() => toggleReceived(p)} />
             </label>
             <button class="row-del" onClick=${() => del(p.id)}>✕</button>
+          </div>`)}
+  </div>`;
+}
+
+function ErpExpenseView() {
+  const { toast } = useStore();
+  const [items, setItems] = useState(null);
+  const [total, setTotal] = useState(0);
+  const [saving, setSaving] = useState(false);
+
+  const today = new Date();
+  today.setMinutes(today.getMinutes() - today.getTimezoneOffset());
+  const todayStr = today.toISOString().slice(0, 10);
+  const weekAgo = new Date(today); weekAgo.setDate(weekAgo.getDate() - 6);
+  const weekAgoStr = weekAgo.toISOString().slice(0, 10);
+  const [dateFrom, setDateFrom] = useState(weekAgoStr);
+  const [dateTo, setDateTo] = useState(todayStr);
+  const [form, setForm] = useState({ expense_date: todayStr, item_name: "", amount_krw: "" });
+
+  const load = useCallback(async () => {
+    try {
+      const qs = new URLSearchParams();
+      if (dateFrom) qs.set("date_from", dateFrom);
+      if (dateTo) qs.set("date_to", dateTo);
+      const d = await api(`/expenses?${qs.toString()}`);
+      setItems(d.items);
+      setTotal(d.total_krw || 0);
+    } catch (e) { setItems([]); }
+  }, [dateFrom, dateTo]);
+  useEffect(() => { load(); }, [load]);
+
+  const add = async () => {
+    const item_name = form.item_name.trim();
+    if (!form.expense_date) return toast("비용발생일자를 입력해 주세요", "err");
+    if (!item_name) return toast("비용항목을 입력해 주세요", "err");
+    const amount = Number(form.amount_krw);
+    if (!amount) return toast("비용을 입력해 주세요", "err");
+    setSaving(true);
+    try {
+      await api("/expenses", { method: "POST", body: { expense_date: form.expense_date, item_name, amount_krw: amount } });
+      setForm({ expense_date: form.expense_date, item_name: "", amount_krw: "" });
+      toast("저장했습니다");
+      load();
+    } catch (e) { toast(e.detail, "err"); }
+    finally { setSaving(false); }
+  };
+
+  const updAmount = async (item, v) => {
+    const amount = Number(v);
+    if (!amount || amount === item.amount_krw) return;
+    setItems((l) => l.map((x) => (x.id === item.id ? { ...x, amount_krw: amount } : x)));
+    try { await api(`/expenses/${item.id}`, { method: "PATCH", body: { amount_krw: amount } }); load(); }
+    catch (e) {
+      toast(e.detail, "err");
+      setItems((l) => l.map((x) => (x.id === item.id ? { ...x, amount_krw: item.amount_krw } : x)));
+    }
+  };
+
+  const del = async (id) => {
+    if (!confirm("이 비용을 삭제할까요?")) return;
+    try { await api(`/expenses/${id}`, { method: "DELETE" }); load(); toast("삭제했습니다"); }
+    catch (e) { toast(e.detail, "err"); }
+  };
+
+  return html`<div>
+    <div class="panel">
+      <div class="erp-row-fields expense-form">
+        <input type="date" value=${form.expense_date} onInput=${(e) => setForm({ ...form, expense_date: e.target.value })} />
+        <input placeholder="비용항목" value=${form.item_name} onInput=${(e) => setForm({ ...form, item_name: e.target.value })} />
+        <input type="number" placeholder="₩" value=${form.amount_krw} onInput=${(e) => setForm({ ...form, amount_krw: e.target.value })} />
+      </div>
+      <button disabled=${saving} onClick=${add}>추가</button>
+    </div>
+
+    <div class="panel erp-filter">
+      <div class="erp-filter-row">
+        <label>시작일<input type="date" value=${dateFrom} onInput=${(e) => setDateFrom(e.target.value)} /></label>
+        <label>종료일<input type="date" value=${dateTo} onInput=${(e) => setDateTo(e.target.value)} /></label>
+      </div>
+    </div>
+
+    <div class="erp-total">누적 ₩${Math.round(total).toLocaleString()}</div>
+
+    ${items === null
+      ? html`<${Spinner} />`
+      : items.length === 0
+        ? html`<div class="empty">기록이 없어요.</div>`
+        : items.map((x) => html`<div class="erp-item" key=${x.id}>
+            <div class="erp-item-main">
+              <b>${x.item_name}</b>
+              <div class="muted sm">${x.expense_date}</div>
+            </div>
+            <input type="number" class="expense-amount" value=${x.amount_krw}
+              onBlur=${(e) => updAmount(x, e.target.value)} />
+            <button class="row-del" onClick=${() => del(x.id)}>✕</button>
           </div>`)}
   </div>`;
 }
