@@ -1,6 +1,6 @@
 # ERD — `healthweb` 스키마
 
-Oracle Autonomous DB(SHINDB), `healthweb` 전용 유저로 접속. 마이그레이션 파일: `sql/010`~`sql/043` (순서대로 적용).
+Oracle Autonomous DB(SHINDB), `healthweb` 전용 유저로 접속. 마이그레이션 파일: `sql/010`~`sql/045` (순서대로 적용).
 `BLOCK`·`COMMENT`가 Oracle 예약어라 테이블명은 `user_block`·`post_comment`를 쓴다.
 
 ```mermaid
@@ -23,6 +23,9 @@ erDiagram
     APP_USER ||--o{ ANNOUNCEMENT : "작성한다(created_by, 오너)"
     APP_USER ||--o| MEDIA : "아바타로 쓴다(avatar_media_id)"
     APP_USER ||--o| TG_LINK_CODE : "발급받는다"
+    APP_USER ||--o{ PURCHASE_ITEM : "구매 기록한다(erp_access 부여자만)"
+
+    PURCHASE_ITEM }o--o| MEDIA : "영수증 원본(source_media_id)"
 
     WEIGHT_ENTRY ||--o| POST : "글로 공유될 수 있다"
     WEIGHT_ENTRY }o--o| MEDIA : "진행 사진(photo_media_id)"
@@ -48,6 +51,7 @@ erDiagram
         number tg_chat_id "텔레그램 연동, nullable"
         number rank_score "등급 누적 점수"
         number rank_level "1~5, 기본 1"
+        number erp_access "0/1, 기본 0 — 오너가 개별 부여하는 ERP 접근 권한"
     }
     WEIGHT_ENTRY {
         number id PK
@@ -111,12 +115,27 @@ erDiagram
     MEDIA {
         number id PK
         varchar2 login_id FK
-        varchar2 kind "avatar/progress/post"
+        varchar2 kind "avatar/progress/post/receipt"
         varchar2 path
         varchar2 thumb_path
         number width
         number height
         number bytes
+    }
+    PURCHASE_ITEM {
+        number id PK
+        varchar2 login_id FK
+        varchar2 shop_name "nullable"
+        varchar2 product_name
+        varchar2 option_text "nullable"
+        number quantity "기본 1"
+        number price_cny "nullable"
+        number price_krw "nullable"
+        number fx_rate "추출 시점 CNY→KRW 환율, nullable"
+        timestamp fx_at "nullable"
+        varchar2 order_date "YYYY-MM-DD, nullable"
+        number source_media_id FK "영수증 원본, nullable"
+        timestamp created_at
     }
     REPORT {
         number id PK
@@ -156,6 +175,7 @@ erDiagram
 | `042` | 관리자 공지 — `announcement` |
 | `043` | 등급 — `app_user`+`rank_score/rank_level`, `notification`+`rank_level`, kind 체크 제약에 `'rank'` 추가 |
 | `044` | 글 종류 재편 — `post.kind` 값 교체(brag/resolve/reflect/casual, 표시 라벨 자랑/도전/성찰/그냥), 기존 데이터 최선 추정 매핑 |
+| `045` | ERP 구매 기록 — `app_user`+`erp_access`, `purchase_item` 신설, `media.kind` 체크 제약에 `'receipt'` 추가 |
 
 ## 알려진 특이사항
 

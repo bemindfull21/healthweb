@@ -58,6 +58,8 @@ TG_BOT_USERNAME = os.environ.get("TELEGRAM_BOT_USERNAME", "health_trainer21_bot"
 WEB_APP_URL = os.environ.get("WEB_APP_URL", "https://bemindfull21.github.io/healthweb").rstrip("/")
 INTERNAL_KEY = os.environ.get("INTERNAL_KEY", "").strip()
 CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"  # 헷갈리는 글자 제외
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()  # _shared/secrets.env 공용, 다른 프로젝트와 쿼터 공유
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-flash-lite-latest")
 
 pool: oracledb.ConnectionPool | None = None
 app = FastAPI(title="health-web API")
@@ -174,7 +176,7 @@ def current_user(authorization: str = Header(default="")) -> dict:
         raise HTTPException(401, "세션이 만료되었습니다. 다시 로그인해 주세요")
     u = q1(
         "select au.login_id, au.name, au.bio, au.link, au.location, au.pinned_post_id, "
-        "au.target_weight, au.weight_privacy, au.avatar_media_id, au.tg_chat_id, au.rank_level, au.rank_score, "
+        "au.target_weight, au.weight_privacy, au.avatar_media_id, au.tg_chat_id, au.rank_level, au.rank_score, au.erp_access, "
         "m.path avatar_path, m.thumb_path avatar_thumb "
         "from healthweb.app_user au "
         "left join healthweb.media m on m.id = au.avatar_media_id "
@@ -422,7 +424,8 @@ def _gc_media(mid: Optional[int]) -> None:
     if q1(
         "select 1 x from healthweb.app_user where avatar_media_id = :i "
         "union all select 1 from healthweb.weight_entry where photo_media_id = :i "
-        "union all select 1 from healthweb.post where image_media_id = :i",
+        "union all select 1 from healthweb.post where image_media_id = :i "
+        "union all select 1 from healthweb.purchase_item where source_media_id = :i",
         i=mid,
     ):
         return
@@ -448,6 +451,11 @@ def _own_media(mid: Optional[int], login_id: str, *kinds: str) -> Optional[int]:
 
 def require_owner(u: dict) -> None:
     if not OWNER_LOGIN_ID or u["login_id"] != OWNER_LOGIN_ID:
+        raise HTTPException(403, "권한이 없습니다")
+
+
+def require_erp(u: dict) -> None:
+    if not u["erp_access"]:
         raise HTTPException(403, "권한이 없습니다")
 
 
@@ -543,6 +551,30 @@ class ChallengeIn(BaseModel):
 
 class CheckinIn(BaseModel):
     date: str
+
+
+class ErpAccessIn(BaseModel):
+    erp_access: bool
+
+
+class PurchaseExtractIn(BaseModel):
+    media_id: int
+
+
+class PurchaseItemIn(BaseModel):
+    shop_name: Optional[str] = None
+    product_name: str
+    option_text: Optional[str] = None
+    quantity: int = 1
+    price_cny: Optional[float] = None
+    price_krw: Optional[float] = None
+    fx_rate: Optional[float] = None
+
+
+class PurchaseSaveIn(BaseModel):
+    items: list[PurchaseItemIn]
+    order_date: Optional[str] = None
+    source_media_id: Optional[int] = None
 
 
 # ---------- 헬스체크 ----------
@@ -652,6 +684,7 @@ def me(u: dict = Depends(current_user)) -> dict:
         "rank_level": u["rank_level"],
         "rank_name": RANK_NAMES[u["rank_level"]],
         "rank_score": u["rank_score"],
+        "erp_access": bool(u["erp_access"]),
     }
     if OWNER_LOGIN_ID and u["login_id"] == OWNER_LOGIN_ID:
         out["is_owner"] = True
@@ -723,7 +756,7 @@ async def upload_media(
     kind: str = Form(...),
     u: dict = Depends(current_user),
 ) -> dict:
-    if kind not in ("avatar", "progress", "post"):
+    if kind not in ("avatar", "progress", "post", "receipt"):
         raise HTTPException(400, "잘못된 이미지 종류")
     if (file.content_type or "").lower() not in IMG_MIME:
         raise HTTPException(400, "JPEG · PNG · WebP 이미지만 올릴 수 있습니다")
@@ -760,7 +793,8 @@ def delete_media(mid: int, u: dict = Depends(current_user)) -> dict:
     if q1(
         "select 1 x from healthweb.app_user where avatar_media_id = :i "
         "union all select 1 from healthweb.weight_entry where photo_media_id = :i "
-        "union all select 1 from healthweb.post where image_media_id = :i",
+        "union all select 1 from healthweb.post where image_media_id = :i "
+        "union all select 1 from healthweb.purchase_item where source_media_id = :i",
         i=mid,
     ):
         raise HTTPException(400, "사용 중인 이미지입니다. 글·기록에서 먼저 빼주세요")
@@ -1148,7 +1182,7 @@ def _refresh_rank(login_id: str) -> None:
 def profile(handle: str, u: dict = Depends(current_user)) -> dict:
     p = q1(
         "select au.login_id, au.name, au.bio, au.link, au.location, au.pinned_post_id, "
-        "au.target_weight, au.weight_privacy, au.created_at, au.rank_level, "
+        "au.target_weight, au.weight_privacy, au.created_at, au.rank_level, au.erp_access, "
         "m.path av_path, m.thumb_path av_thumb "
         "from healthweb.app_user au "
         "left join healthweb.media m on m.id = au.avatar_media_id "
@@ -1181,6 +1215,7 @@ def profile(handle: str, u: dict = Depends(current_user)) -> dict:
         "rank_level": p["rank_level"],
         "rank_name": RANK_NAMES[p["rank_level"]],
         "mine": pl == me,
+        **({"erp_access": bool(p["erp_access"])} if OWNER_LOGIN_ID and me == OWNER_LOGIN_ID else {}),
         "post_count": q1("select count(*) c from healthweb.post where login_id = :v", v=pl)["c"],
         "challenge_count": q1(
             "select count(*) c from healthweb.challenge_member where login_id = :v", v=pl
@@ -1866,3 +1901,175 @@ def internal_tg_link(body: TgLinkIn, _: None = Depends(require_internal)) -> dic
 def internal_tg_unlink(body: TgUnlinkIn, _: None = Depends(require_internal)) -> dict:
     n = dml("update healthweb.app_user set tg_chat_id = null where tg_chat_id = :cid", cid=body.chat_id)
     return {"ok": True, "unlinked": n > 0}
+
+
+# ---------- ERP (구매 기록, 오너가 지정한 사용자만) ----------
+
+EXTRACT_PROMPT = """이 이미지는 쇼핑몰(타오바오 등) 주문 내역 화면입니다. 보이는 모든 상품 줄을 찾아
+아래 JSON 형식으로만 답하세요. 다른 설명은 절대 붙이지 마세요.
+
+{"items": [
+  {"shop_name": "상점 이름 또는 null", "product_name": "상품명", "option_text": "색상·사이즈 등 옵션 또는 null",
+   "quantity": 수량(숫자), "price_cny": 단가(위안화, 숫자만, 통화기호 제외)}
+]}
+
+상품을 하나도 못 찾으면 {"items": []} 로 답하세요. price_cny 는 반드시 숫자(예: 19.9)로, 못 읽으면 null."""
+
+
+def _extract_purchase_items(raw: bytes, mime: str) -> list[dict]:
+    """동기 함수 — run_in_threadpool 로 호출."""
+    from google import genai
+    from google.genai import types as genai_types
+
+    client = genai.Client(
+        api_key=GEMINI_API_KEY,
+        http_options=genai_types.HttpOptions(timeout=30_000, retry_options=genai_types.HttpRetryOptions(attempts=2)),
+    )
+    resp = client.models.generate_content(
+        model=GEMINI_MODEL,
+        contents=[genai_types.Part.from_bytes(data=raw, mime_type=mime), EXTRACT_PROMPT],
+        config=genai_types.GenerateContentConfig(response_mime_type="application/json", temperature=0),
+    )
+    data = json.loads(resp.text)
+    items = data.get("items")
+    return items if isinstance(items, list) else []
+
+
+def _fx_cny_to_krw() -> Optional[float]:
+    """CNY->KRW 환율. 실패하면 None(원화 환산 없이 위안화만 저장)."""
+    try:
+        req = urllib.request.Request("https://open.er-api.com/v6/latest/CNY")
+        with urllib.request.urlopen(req, timeout=8) as r:
+            data = json.loads(r.read())
+        rate = data.get("rates", {}).get("KRW")
+        return float(rate) if rate else None
+    except Exception:
+        return None
+
+
+@app.patch("/admin/users/{handle}/erp-access")
+def set_erp_access(handle: str, body: ErpAccessIn, u: dict = Depends(current_user)) -> dict:
+    require_owner(u)
+    row = q1(
+        "select login_id from healthweb.app_user where lower(name) = lower(:h)",
+        h=" ".join(handle.split()),
+    )
+    if row is None:
+        raise HTTPException(404, "없는 사용자입니다")
+    dml(
+        "update healthweb.app_user set erp_access = :v where login_id = :l",
+        v=1 if body.erp_access else 0, l=row["login_id"],
+    )
+    return {"ok": True}
+
+
+@app.post("/purchases/extract")
+async def extract_purchase(body: PurchaseExtractIn, u: dict = Depends(current_user)) -> dict:
+    require_erp(u)
+    if not GEMINI_API_KEY:
+        raise HTTPException(503, "AI 추출 기능이 설정되지 않았습니다")
+    if not rate_ok(f"extract:{u['login_id']}", 10, 3600):
+        raise HTTPException(429, "요청이 많습니다. 잠시 후 다시 시도해 주세요")
+    _own_media(body.media_id, u["login_id"], "receipt")
+    m = q1("select path from healthweb.media where id = :i", i=body.media_id)
+    if m is None:
+        raise HTTPException(400, "잘못된 이미지입니다")
+    raw = (MEDIA_DIR / m["path"]).read_bytes()
+
+    try:
+        raw_items = await run_in_threadpool(_extract_purchase_items, raw, "image/jpeg")
+    except Exception:
+        raise HTTPException(502, "이미지 분석에 실패했습니다. 다시 시도해 주세요")
+
+    rate = await run_in_threadpool(_fx_cny_to_krw)
+    out = []
+    for it in raw_items:
+        if not isinstance(it, dict):
+            continue
+        cny = it.get("price_cny")
+        try:
+            cny = float(cny) if cny is not None else None
+        except (TypeError, ValueError):
+            cny = None
+        out.append({
+            "shop_name": (str(it.get("shop_name")).strip() if it.get("shop_name") else None),
+            "product_name": (str(it.get("product_name") or "")).strip()[:300] or "상품",
+            "option_text": (str(it.get("option_text")).strip() if it.get("option_text") else None),
+            "quantity": int(it.get("quantity")) if str(it.get("quantity") or "").isdigit() else 1,
+            "price_cny": cny,
+            "price_krw": round(cny * rate, 0) if (cny is not None and rate) else None,
+            "fx_rate": rate,
+        })
+    return {"items": out}
+
+
+@app.post("/purchases")
+def save_purchases(body: PurchaseSaveIn, u: dict = Depends(current_user)) -> dict:
+    require_erp(u)
+    if not body.items:
+        raise HTTPException(400, "저장할 항목이 없습니다")
+    smid = _own_media(body.source_media_id, u["login_id"], "receipt")
+    ids = []
+    for it in body.items:
+        name = it.product_name.strip()[:300]
+        if not name:
+            continue
+        pid = insert_id(
+            "insert into healthweb.purchase_item "
+            "(login_id, shop_name, product_name, option_text, quantity, price_cny, price_krw, fx_rate, fx_at, order_date, source_media_id) "
+            "values (:l, :s, :p, :o, :q, :cny, :krw, :rate, :fa, :od, :m) returning id into :new_id",
+            l=u["login_id"], s=(it.shop_name or None), p=name, o=(it.option_text or None),
+            q=max(1, it.quantity or 1), cny=it.price_cny, krw=it.price_krw, rate=it.fx_rate,
+            fa=utcnow() if it.fx_rate else None, od=(body.order_date or None), m=smid,
+        )
+        ids.append(pid)
+    if not ids:
+        raise HTTPException(400, "저장할 항목이 없습니다")
+    return {"ids": ids}
+
+
+@app.get("/purchases")
+def list_purchases(u: dict = Depends(current_user), cursor: Optional[int] = None, limit: int = 30) -> dict:
+    require_erp(u)
+    limit = max(1, min(limit, 100))
+    where = "and id < :cur" if cursor else ""
+    binds = {"l": u["login_id"], "lim": limit}
+    if cursor:
+        binds["cur"] = cursor
+    rows = qall(
+        "select id, shop_name, product_name, option_text, quantity, price_cny, price_krw, "
+        "fx_rate, order_date, source_media_id, created_at "
+        "from healthweb.purchase_item where login_id = :l " + where + " "
+        "order by id desc fetch first :lim rows only",
+        **binds,
+    )
+    items = [{
+        "id": r["id"], "shop_name": r["shop_name"], "product_name": r["product_name"],
+        "option_text": r["option_text"], "quantity": r["quantity"],
+        "price_cny": float(r["price_cny"]) if r["price_cny"] is not None else None,
+        "price_krw": float(r["price_krw"]) if r["price_krw"] is not None else None,
+        "order_date": r["order_date"], "created_at": iso_z(r["created_at"]),
+    } for r in rows]
+    total = q1(
+        "select sum(price_krw) s, sum(price_cny) c from healthweb.purchase_item where login_id = :l",
+        l=u["login_id"],
+    )
+    return {
+        "items": items, "next_cursor": items[-1]["id"] if len(items) == limit else None,
+        "total_krw": float(total["s"]) if total and total["s"] is not None else 0,
+        "total_cny": float(total["c"]) if total and total["c"] is not None else 0,
+    }
+
+
+@app.delete("/purchases/{pid}")
+def delete_purchase(pid: int, u: dict = Depends(current_user)) -> dict:
+    require_erp(u)
+    row = q1(
+        "select source_media_id from healthweb.purchase_item where id = :i and login_id = :l",
+        i=pid, l=u["login_id"],
+    )
+    if row is None:
+        raise HTTPException(404, "없는 기록입니다")
+    dml("delete from healthweb.purchase_item where id = :i", i=pid)
+    _gc_media(row["source_media_id"])
+    return {"ok": True}

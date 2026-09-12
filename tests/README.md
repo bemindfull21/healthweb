@@ -5,8 +5,9 @@
 
 ## 절대 원칙
 
-**실사용자 계정(`bemindfull21`, `cindy0870`)과 그 데이터는 어떤 스크립트도 건드리지 않는다.**
+**실사용자 계정과 그 데이터는 어떤 스크립트도 건드리지 않는다.**
 각 스크립트의 `cleanup()`은 항상 해당 스크립트 전용 테스트 login_id만 대상으로 한다.
+실사용자 목록은 계속 늘어나므로 테스트 전후 `select login_id, name from healthweb.app_user`로 항상 최신 상태를 직접 확인할 것 — 이 문서의 스냅샷을 믿지 말 것.
 
 ## 준비
 
@@ -39,10 +40,11 @@ cp .env.example .env   # HEALTHWEB_DB_PASSWORD 등 값 채우기 (.env는 git �
 | `test_rank.py` | 등급 점수 누적, 승급 알림, **하락 없음**(핵심 불변조건) |
 | `test_edit.py` | 글 수정(`PATCH /posts/:id`) 본문/권한/유효성 |
 | `test_kind.py` | 글 종류(자랑/도전/성찰/그냥) 검증 + 수정 시 종류 변경 |
+| `test_erp.py` | ERP 권한 게이팅, 오너 부여/회수, 영수증 업로드+Gemini 추출(실제 API 호출), 저장/목록/합계/삭제 |
 
 ## 배포 전 회귀 체크리스트
 
 1. `node --check ../app.js` / `python -m py_compile ../api/app.py`
-2. 위 9개 스위트 전부 통과(스위트 사이 재시작)
+2. 위 10개 스위트 전부 통과(스위트 사이 재시작)
 3. 프론트 UI 변경이 있으면 브라우저로 직접 확인 — 자동화된 프론트 테스트는 없음
 4. `select login_id, name from healthweb.app_user`로 테스트 계정이 안 남았는지 최종 확인

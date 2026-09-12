@@ -134,13 +134,14 @@ function TopBar({ title, onBack }) {
 }
 
 function TabBar() {
-  const { route, nav, openSheet, bump, unread } = useStore();
+  const { route, nav, openSheet, bump, unread, me } = useStore();
   const on = (r) =>
     route === r ||
     (r === "/feed" && route.startsWith("/p/")) ||
     (r === "/challenges" && route.startsWith("/challenges"));
   const go = (r) => () => (route === r ? bump() : nav(r)); // 현재 탭 다시 누르면 새로고침
-  return html`<nav class="tabbar tabbar-5">
+  const erp = me && me.erp_access;
+  return html`<nav class=${"tabbar " + (erp ? "tabbar-6" : "tabbar-5")}>
     <button class=${on("/feed") ? "on" : ""} onClick=${go("/feed")}>피드</button>
     <button class=${on("/challenges") ? "on" : ""} onClick=${go("/challenges")}>챌린지</button>
     <button class="plus" onClick=${openSheet} aria-label="추가">＋</button>
@@ -148,6 +149,7 @@ function TabBar() {
       알림${unread > 0 && html`<span class="badge">${unread > 9 ? "9+" : unread}</span>`}
     </button>
     <button class=${route === "/me" ? "on" : ""} onClick=${go("/me")}>나</button>
+    ${erp && html`<button class=${on("/erp") ? "on" : ""} onClick=${go("/erp")}>ERP</button>`}
   </nav>`;
 }
 
@@ -658,7 +660,7 @@ function PostView({ id }) {
 
 // ---------- 뷰: 프로필 ----------
 function ProfileView({ handle }) {
-  const { nav, toast } = useStore();
+  const { nav, toast, me } = useStore();
   const [p, setP] = useState(null);
   const [state, setState] = useState("loading");
   const [following, setFollowing] = useState(false);
@@ -703,6 +705,15 @@ function ProfileView({ handle }) {
       toast("신고를 접수했습니다");
     } catch (e) { toast(e.detail, "err"); }
   };
+  const toggleErp = async () => {
+    setMenu(false);
+    const next = !p.erp_access;
+    try {
+      await api(`/admin/users/${encodeURIComponent(handle)}/erp-access`, { method: "PATCH", body: { erp_access: next } });
+      toast(next ? "ERP 권한을 줬습니다" : "ERP 권한을 뺐습니다");
+      load();
+    } catch (e) { toast(e.detail, "err"); }
+  };
 
   if (state === "loading") return html`<${Spinner} />`;
   if (state === "gone") return html`<div class="view"><${ErrorBox} msg="없는 사용자입니다" /></div>`;
@@ -733,6 +744,7 @@ function ProfileView({ handle }) {
             <button class="icon-btn" onClick=${() => setMenu(!menu)} aria-label="더보기">⋯</button>
             ${menu && html`<div class="menu-pop">
               <button class="plain" onClick=${report}>신고</button>
+              ${me && me.is_owner && html`<button class="plain" onClick=${toggleErp}>${p.erp_access ? "ERP 권한 해제" : "ERP 권한 부여"}</button>`}
               <button onClick=${block}>차단</button>
             </div>`}
           </div>`}
@@ -1051,6 +1063,122 @@ function SettingsView() {
     </div>
 
     <button class="logout" onClick=${logout}>로그아웃</button>
+  </div>`;
+}
+
+// ---------- 뷰: ERP (구매 기록) ----------
+function ErpView() {
+  const { toast } = useStore();
+  const [receipt, setReceipt] = useState(null);
+  const [extracting, setExtracting] = useState(false);
+  const [draft, setDraft] = useState(null);
+  const [orderDate, setOrderDate] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [list, setList] = useState(null);
+  const [totals, setTotals] = useState({ krw: 0, cny: 0 });
+
+  const emptyRow = () => ({ shop_name: "", product_name: "", option_text: "", quantity: 1, price_cny: "", price_krw: "" });
+
+  const load = useCallback(async () => {
+    try {
+      const d = await api("/purchases");
+      setList(d.items);
+      setTotals({ krw: d.total_krw || 0, cny: d.total_cny || 0 });
+    } catch (e) { setList([]); }
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  const onReceipt = async (media) => {
+    setReceipt(media);
+    if (!media) { setDraft(null); return; }
+    setExtracting(true);
+    try {
+      const r = await api("/purchases/extract", { method: "POST", body: { media_id: media.id } });
+      setDraft(r.items && r.items.length ? r.items.map((it) => ({
+        shop_name: it.shop_name || "", product_name: it.product_name || "", option_text: it.option_text || "",
+        quantity: it.quantity || 1, price_cny: it.price_cny ?? "", price_krw: it.price_krw ?? "",
+      })) : [emptyRow()]);
+    } catch (e) { toast(e.detail, "err"); setDraft([emptyRow()]); }
+    finally { setExtracting(false); }
+  };
+
+  const updRow = (i, k, v) => setDraft((d) => d.map((row, idx) => (idx === i ? { ...row, [k]: v } : row)));
+  const addRow = () => setDraft((d) => [...(d || []), emptyRow()]);
+  const rmRow = (i) => setDraft((d) => d.filter((_, idx) => idx !== i));
+
+  const save = async () => {
+    const items = (draft || []).filter((r) => (r.product_name || "").trim());
+    if (!items.length) return toast("저장할 상품이 없어요", "err");
+    setSaving(true);
+    try {
+      await api("/purchases", {
+        method: "POST",
+        body: {
+          items: items.map((r) => ({
+            shop_name: r.shop_name.trim() || null,
+            product_name: r.product_name.trim(),
+            option_text: r.option_text.trim() || null,
+            quantity: Number(r.quantity) || 1,
+            price_cny: r.price_cny === "" ? null : Number(r.price_cny),
+            price_krw: r.price_krw === "" ? null : Number(r.price_krw),
+          })),
+          order_date: orderDate || null,
+          source_media_id: receipt ? receipt.id : null,
+        },
+      });
+      toast("저장했습니다");
+      setReceipt(null); setDraft(null); setOrderDate("");
+      load();
+    } catch (e) { toast(e.detail, "err"); }
+    finally { setSaving(false); }
+  };
+
+  const del = async (id) => {
+    if (!confirm("이 기록을 삭제할까요?")) return;
+    try { await api(`/purchases/${id}`, { method: "DELETE" }); load(); toast("삭제했습니다"); }
+    catch (e) { toast(e.detail, "err"); }
+  };
+
+  return html`<div class="view erp">
+    <div class="panel">
+      <p class="muted sm">주문 내역 스크린샷을 올리면 AI가 상품·가격을 읽어줘요.</p>
+      <${ImageUpload} kind="receipt" value=${receipt} onChange=${onReceipt} label="스크린샷 올리기" />
+      ${extracting && html`<p class="muted sm">읽는 중…</p>`}
+    </div>
+
+    ${draft && html`<div class="panel">
+      <label>주문일 (선택)
+        <input type="date" value=${orderDate} onInput=${(e) => setOrderDate(e.target.value)} /></label>
+      ${draft.map((row, i) => html`<div class="erp-row" key=${i}>
+        <input placeholder="상점" value=${row.shop_name} onInput=${(e) => updRow(i, "shop_name", e.target.value)} />
+        <input placeholder="상품명" value=${row.product_name} onInput=${(e) => updRow(i, "product_name", e.target.value)} />
+        <input placeholder="옵션" value=${row.option_text} onInput=${(e) => updRow(i, "option_text", e.target.value)} />
+        <input type="number" placeholder="수량" value=${row.quantity} onInput=${(e) => updRow(i, "quantity", e.target.value)} />
+        <input type="number" placeholder="¥" value=${row.price_cny} onInput=${(e) => updRow(i, "price_cny", e.target.value)} />
+        <input type="number" placeholder="₩" value=${row.price_krw} onInput=${(e) => updRow(i, "price_krw", e.target.value)} />
+        <button type="button" class="row-del" onClick=${() => rmRow(i)}>✕</button>
+      </div>`)}
+      <button type="button" class="ghost" onClick=${addRow}>+ 줄 추가</button>
+      <button disabled=${saving} onClick=${save}>저장</button>
+    </div>`}
+
+    <div class="erp-total">누적 ¥${totals.cny.toFixed(2)} · ₩${Math.round(totals.krw).toLocaleString()}</div>
+
+    ${list === null
+      ? html`<${Spinner} />`
+      : list.length === 0
+        ? html`<div class="empty">아직 기록이 없어요.</div>`
+        : list.map((p) => html`<div class="erp-item" key=${p.id}>
+            <div class="erp-item-main">
+              <b>${p.product_name}</b>${p.option_text && html` <span class="muted sm">${p.option_text}</span>`}
+              <div class="muted sm">${p.shop_name || ""}${p.quantity > 1 ? ` × ${p.quantity}` : ""}</div>
+            </div>
+            <div class="erp-item-price">
+              ${p.price_krw != null && html`<div>₩${Math.round(p.price_krw).toLocaleString()}</div>`}
+              ${p.price_cny != null && html`<div class="muted sm">¥${p.price_cny}</div>`}
+            </div>
+            <button class="row-del" onClick=${() => del(p.id)}>✕</button>
+          </div>`)}
   </div>`;
 }
 
@@ -1400,6 +1528,7 @@ function App() {
   else if (cm) { view = html`<${ChallengeView} id=${cm[1]} />`; title = "챌린지"; back = () => nav("/challenges"); }
   else if (route === "/notifications") { view = html`<${NotificationsView} />`; title = "알림"; }
   else if (route === "/me") { view = html`<${MeView} />`; title = "나"; }
+  else if (route === "/erp") { view = html`<${ErpView} />`; title = "ERP"; }
   else if (route === "/search") { view = html`<${SearchView} />`; title = "검색"; back = () => history.back(); }
   else if (route === "/admin") { view = html`<${AdminHubView} />`; title = "관리자"; back = () => nav("/settings"); }
   else if (route === "/admin/reports") { view = html`<${AdminReportsView} />`; title = "신고 관리"; back = () => nav("/admin"); }

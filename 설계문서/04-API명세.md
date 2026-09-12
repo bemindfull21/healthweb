@@ -82,7 +82,7 @@
 
 | 메서드 | 경로 | 바디/파라미터 | 설명 |
 |---|---|---|---|
-| POST | `/media` | multipart: `file, kind∈{avatar,progress,post}` | 8MB 제한, JPEG/PNG/WebP만, 유저당 200장. Pillow로 EXIF 제거·리사이즈(1280/400/320)·JPEG 2장(원본+썸네일) |
+| POST | `/media` | multipart: `file, kind∈{avatar,progress,post,receipt}` | 8MB 제한, JPEG/PNG/WebP만, 유저당 200장. Pillow로 EXIF 제거·리사이즈(1280/400/320)·JPEG 2장(원본+썸네일) |
 | DELETE | `/media/:id` | — | 아무 데도 참조 안 될 때만 삭제 |
 | GET | `/media/{key:path}` | — | 파일 서빙, `Cache-Control: immutable`, 경로 이탈 방지 |
 
@@ -109,6 +109,18 @@
 |---|---|---|---|
 | GET/POST | `/admin/announcements` | `title?, body, link?, starts_at?, ends_at?` | |
 | PATCH/DELETE | `/admin/announcements/:id` | | |
+
+## ERP 구매 기록 (오너가 지정한 사용자 전용)
+
+커뮤니티 핵심 기능과 무관한 오너용 개인 유틸리티. 아래 전부 `require_erp()`(`app_user.erp_access`) 게이트, 미부여 시 403.
+
+| 메서드 | 경로 | 인증 | 바디 | 설명 |
+|---|---|---|---|---|
+| PATCH | `/admin/users/:handle/erp-access` | ✓(오너 전용) | `erp_access: bool` | `handle`은 `name`(닉네임). ERP 접근 권한 부여/회수 |
+| POST | `/purchases/extract` | ✓(erp_access) | `media_id` | `kind='receipt'` 이미지를 Gemini 비전으로 분석 → `{items:[{shop_name,product_name,option_text,quantity,price_cny,price_krw,fx_rate}]}`. 상품 미검출 시 `items:[]`(정상). 10회/시간 제한 |
+| POST | `/purchases` | ✓(erp_access) | `items[], order_date?, source_media_id?` | 항목별 `product_name` 필수(빈 값은 건너뜀, 전부 빈 값이면 400). `{ids:[...]}` 반환 |
+| GET | `/purchases?cursor=&limit=` | ✓(erp_access) | — | 커서 페이지네이션(id desc) + 전체 합계 `total_krw`·`total_cny` |
+| DELETE | `/purchases/:id` | ✓(erp_access) | — | 본인 기록만(아니면 404), 원본 영수증 미디어 GC |
 
 ## 기타
 

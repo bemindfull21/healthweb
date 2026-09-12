@@ -28,7 +28,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - 로그인/가입 → JWT를 `localStorage["healthweb.token"]` → `app.html`. `401` → 토큰 삭제 후 랜딩.
 - 라우트: `/feed` · `/challenges`·`/challenges/:id` · `/notifications` · `/me` · `/search` · `/p/:id` · `/u/:handle` · `/settings` · `/admin`(오너 허브)·`/admin/reports`·`/admin/announcements`.
   공개(로그인 불필요): `about.html` · `challenge.html?id=`.
-- 탭바 5개: 피드 · 챌린지 · ＋ · 알림 · 나. ＋ = 액션 시트(몸무게 기록 / 글쓰기 / 챌린지 만들기).
+- 탭바 5개: 피드 · 챌린지 · ＋ · 알림 · 나 (`erp_access` 사용자는 ERP 탭 추가로 6개). ＋ = 액션 시트(몸무게 기록 / 글쓰기 / 챌린지 만들기).
 - **브랜드**: `favicon.svg`(결의 하트, 고정 hex — CSS 변수 미사용) 전 페이지 `<link rel="icon">`. `--love`(rose, style.css 라이트/다크)
   + 기존 `--accent`(green) 두 색으로 "마이웨이트"/"마이러브" 분리 표기. `.wordmark`(랜딩 히어로, Gowun Batang·Fraunces 구글 폰트)
   · `.brand-sig`(소개 페이지 하단 서명, 작은 하트+이름). in-app 화면엔 로고 반복 안 함("문 앞에서만" 원칙).
@@ -58,6 +58,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | 텔레그램 알림 (옵트인) | `POST /push/telegram/code` → `{code,deep_link}` (10분 · 일회용) · `GET/DELETE /push/telegram` · `POST /internal/telegram/{link,unlink}` (`X-Internal-Key`, 봇→API 로컬 호출) |
 | 관리자 공지 | `GET/POST /admin/announcements` · `PATCH/DELETE /admin/announcements/:id` (오너 전용). `GET /notifications` 첫 페이지 응답에 `announcements`(활성 3개). `announcement`(title·body·link·starts_at·ends_at) 유효기간은 naive UTC, `_active_announcements()`. `parse_iso_utc()` 로 ISO(Z/offset/날짜만) → naive UTC |
 | 등급 (자기돌봄 습관) | `app_user.rank_level`(1~5)·`rank_score` — `/auth/me`·`GET /u/:handle`·`FEED_SQL`(글 작성자)에 노출. `_refresh_rank()` 를 `POST /weights`·`.../checkin` 성공 시 호출, 점수가 이전보다 클 때만 갱신(하락 없음). 등급 상승 시 `notification`(kind='rank', rank_level) + 텔레그램 |
+| ERP (구매 기록, 오너 지정 전용) | `PATCH /admin/users/:handle/erp-access`(`{erp_access}`, 오너 전용, handle=name) · `POST /purchases/extract`(`{media_id}` → Gemini 비전으로 상품·위안화 가격 추출, CNY→KRW 환율 자동 계산) · `POST /purchases`(`{items[],order_date?,source_media_id?}`) · `GET /purchases?cursor=` (`items`+`total_krw`+`total_cny`) · `DELETE /purchases/:id`. 전부 `require_erp()`(`app_user.erp_access`) 게이트 |
 
 - bcrypt · PyJWT(HS256, 7일). 회원가입 폼은 비밀번호 확인 필드 포함(프론트 검증). `login_id`는 API 응답의 공개 컨텍스트(피드/프로필/댓글)에 절대 안 나감 — `name`만.
 - **P3a 리치 프로필**: `PATCH /auth/me` 에 `link`(URL 정규화·검증) · `location` · `pinned_post_id`(0이하 = 해제, 본인 글만). `GET /u/:handle` 에 `link`·`location`·`post_count`·`challenge_count`·`pinned`(고정 글, `posts`에서 제외)·`trend_series`(public 한정, 스파크라인용).
@@ -104,13 +105,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 reflection→reflect, question→casual) 후 체크 제약 교체. 몸무게 공유 글의 weight 노출은 이제 `kind` 무관 —
 `weight_entry_id` 조인 결과(`weight` not null)만 본다(`_post_row()`).
 
+`sql/045_purchases.sql` (**적용됨** — healthweb 유저): `app_user` +`erp_access`(0/1, 기본 0, 오너가 개별 부여) ·
+`purchase_item`(login_id·shop_name·product_name·option_text·quantity·price_cny·price_krw·fx_rate·fx_at·order_date·source_media_id→media) ·
+`media.kind` 체크 제약에 `'receipt'` 추가(기존 제약 drop 후 재생성, 043과 동일 패턴).
+
 ## VM 배포 (memo-agent)
 
 - `/opt/health-web-api/` : `healthweb-api.service`(uvicorn :8000) + `caddy.service`(`healthweb21.duckdns.org`).
-- `.env`: DB 자격증명 + `JWT_SECRET` + `ALLOW_ORIGIN=https://bemindfull21.github.io` + `MEDIA_DIR=/opt/health-web-api/media` · `MEDIA_BASE_URL=https://healthweb21.duckdns.org/media` · `OWNER_LOGIN_ID=bemindfull21` + **`INTERNAL_KEY`(봇과 공유, 텔레그램 링크 인증) · `TELEGRAM_BOT_TOKEN`(sendMessage) · `WEB_APP_URL=https://bemindfull21.github.io/healthweb` · `TELEGRAM_BOT_USERNAME=health_trainer21_bot`**.
+- `.env`: DB 자격증명 + `JWT_SECRET` + `ALLOW_ORIGIN=https://bemindfull21.github.io` + `MEDIA_DIR=/opt/health-web-api/media` · `MEDIA_BASE_URL=https://healthweb21.duckdns.org/media` · `OWNER_LOGIN_ID=bemindfull21` + **`INTERNAL_KEY`(봇과 공유, 텔레그램 링크 인증) · `TELEGRAM_BOT_TOKEN`(sendMessage) · `WEB_APP_URL=https://bemindfull21.github.io/healthweb` · `TELEGRAM_BOT_USERNAME=health_trainer21_bot`** + **`GEMINI_API_KEY`·`GEMINI_MODEL`(ERP 영수증 추출, `_shared/secrets.env`와 동일 키 재사용 — 전 프로젝트 쿼터 공유)**.
 - 이미지는 FastAPI 가 `GET /media/*` 로 직접 서빙 (Caddy 는 전체 프록시, 별도 설정 없음). `MEDIA_DIR` 은 `.gitignore` + systemd `User=opc` 쓰기 가능. **주기적으로 OCI 로 tar 백업 권장** (DB 백업엔 없음).
 - `/internal/*` 는 Caddy 가 외부 404, 봇은 `127.0.0.1:8000` 직접 호출(우회) + `X-Internal-Key`.
-- 재배포: `scp api/app.py api/requirements.txt opc@168.107.89.8:/opt/health-web-api/` → `ssh ... 'cd /opt/health-web-api && ./venv/bin/pip install -r requirements.txt && sudo systemctl restart healthweb-api'` (Pillow 추가됨).
+- 재배포: `scp api/app.py api/requirements.txt opc@168.107.89.8:/opt/health-web-api/` → `ssh ... 'cd /opt/health-web-api && ./venv/bin/pip install -r requirements.txt && sudo systemctl restart healthweb-api'` (Pillow·google-genai 추가됨).
 
 ## 폐기됨
 
@@ -138,6 +143,16 @@ reflection→reflect, question→casual) 후 체크 제약 교체. 몸무게 공
 프론트: `RankBadge`(`RANK_NAME` 매핑) — `PostCard`·`PostView`(작성자 이름 옆) · `MeView`(`.me-head`) · `ProfileView`(`.phandle`)에 렌더.
 `NotificationsView` 는 `kind==='rank'` 항목을 "🎉 {뱃지} 등급이 되었어요"로 특수 렌더, 클릭 시 `/me`.
 CSS: `--rank-1~5`/`--rank-N-soft` 토큰(라이트/다크) + `.rank-badge`, 다이아몬드만 그라디언트+보더로 차별화.
+
+## ERP 구매 기록 (2026-09-12) — 구현·배포됨
+
+타오바오 등 주문내역 스크린샷 → Gemini 비전으로 상품·위안화 가격 자동 추출 → 위안화+원화(무료 환율 API, `open.er-api.com`) 저장.
+커뮤니티 핵심 기능과 무관한 **오너 지정 개인 유틸리티** — 오너가 `ProfileView` ⋯메뉴에서 사용자별로 `erp_access` 켜고 끔.
+탭바는 `me.erp_access` 가 true 인 사용자에게만 6번째 "ERP" 탭 노출(`.tabbar-6`), 나머지는 기존 5개.
+프론트: `ErpView`(`app.js`) — 영수증 업로드(`ImageUpload kind="receipt"`) → `/purchases/extract` 호출 → 추출 결과 편집 가능한 표
+(상점·상품명·옵션·수량·¥·₩) → 저장 → 아래 누적 목록(₩/¥ 합계, 개별 삭제). 영수증 원본은 `media` 테이블 재사용(`kind='receipt'`).
+`_extract_purchase_items()` 는 `run_in_threadpool` 로 동기 Gemini 호출 격리, `response_mime_type="application/json"` 로 JSON 강제.
+텍스트 없는 이미지는 `{"items": []}` 응답 — 추출 실패가 아니라 정상 케이스로 처리.
 
 ## 미완 (Phase 3c+)
 

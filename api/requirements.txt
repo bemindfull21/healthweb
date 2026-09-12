@@ -5,3 +5,4 @@ bcrypt==4.2.1
 PyJWT==2.10.1
 python-multipart==0.0.20
 pillow==11.1.0
+google-genai>=1.40
