@@ -154,6 +154,7 @@ show("waste in sales list", r); assert r[0] == 200
 wrow = r[1]["items"][0]
 assert wrow["is_waste"] is True and wrow["sale_qty"] == 2, wrow
 assert wrow["sale_price_krw"] == 0 and wrow["sale_amount_krw"] == 0, wrow  # 매출로 잡히지 않음
+assert wrow["waste_value_krw"] == 400, wrow  # 화면 표시용 참고값 = 수량(2)×구매단가(200)
 r = call("GET", "/expenses?date_from=2026-09-08&date_to=2026-09-08", token=tok_u)
 show("waste expense", r); assert r[0] == 200 and len(r[1]["items"]) == 1
 exp = r[1]["items"][0]
@@ -166,6 +167,11 @@ print("12b) 폐기 비용은 비용 탭에서 직접 삭제 불가 — 판매 �
 r = call("DELETE", f"/expenses/{waste_eid}", token=tok_u)
 show("delete waste expense directly", r)
 assert r[0] == 400 and r[1]["detail"] == "폐기 비용을 삭제하려면 판매 목록에서 폐기판매를 삭제하세요", r
+
+print("12c) 폐기 비용은 금액도 수정 불가")
+r = call("PATCH", f"/expenses/{waste_eid}", {"amount_krw": 1}, token=tok_u)
+show("patch waste expense rejected", r)
+assert r[0] == 400 and r[1]["detail"] == "폐기로 자동 생성된 비용은 금액을 변경할 수 없습니다", r
 
 print("13) 폐기 건은 수정 불가")
 r = call("PATCH", f"/sales/{wid}", {"sale_qty": 1, "sale_price_krw": 100}, token=tok_u)

@@ -1528,7 +1528,7 @@ function ErpSalesView() {
                   <input type="number" value=${x.sale_qty} onBlur=${(e) => upd(x, { sale_qty: e.target.value })} />
                   <input type="number" value=${x.sale_price_krw} onBlur=${(e) => upd(x, { sale_price_krw: e.target.value })} />
                 </div>`}
-            <div class="erp-item-price">₩${Math.round(x.sale_amount_krw).toLocaleString()}</div>
+            <div class="erp-item-price">₩${Math.round(x.is_waste ? (x.waste_value_krw || 0) : x.sale_amount_krw).toLocaleString()}</div>
             <button class="row-del" onClick=${() => del(x.id)}>✕</button>
           </div>`)}
   </div>`;

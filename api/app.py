@@ -2282,6 +2282,15 @@ def list_expenses(
 @app.patch("/expenses/{eid}")
 def update_expense(eid: int, body: ExpensePatchIn, u: dict = Depends(current_user)) -> dict:
     require_erp(u)
+    row = q1(
+        "select 1 x from healthweb.expense_item where id = :i and login_id = :l",
+        i=eid, l=u["login_id"],
+    )
+    if row is None:
+        raise HTTPException(404, "없는 기록입니다")
+    has_sale = q1("select 1 x from healthweb.sale_item where expense_item_id = :i and rownum = 1", i=eid)
+    if has_sale:
+        raise HTTPException(400, "폐기로 자동 생성된 비용은 금액을 변경할 수 없습니다")
     n = dml(
         "update healthweb.expense_item set amount_krw = :a where id = :i and login_id = :l",
         a=body.amount_krw, i=eid, l=u["login_id"],
@@ -2398,7 +2407,7 @@ def list_sales(
     where = " and ".join(conds)
     rows = qall(
         f"select s.id, s.sale_date, s.sale_qty, s.sale_price_krw, s.sale_amount_krw, s.is_waste, "
-        f"p.purchase_no, p.product_name, m.path thumb_path "
+        f"p.purchase_no, p.product_name, p.unit_price_krw, m.path thumb_path "
         f"from healthweb.sale_item s join healthweb.purchase_item p on p.id = s.purchase_item_id "
         f"left join healthweb.media m on m.id = p.thumb_media_id "
         f"where {where} order by s.sale_date desc, s.id desc",
@@ -2408,6 +2417,9 @@ def list_sales(
         "id": r["id"], "sale_date": r["sale_date"], "purchase_no": r["purchase_no"], "product_name": r["product_name"],
         "sale_qty": r["sale_qty"], "sale_price_krw": float(r["sale_price_krw"]),
         "sale_amount_krw": float(r["sale_amount_krw"]), "is_waste": bool(r["is_waste"]),
+        "waste_value_krw": (
+            round(r["sale_qty"] * float(r["unit_price_krw"]), 0) if r["unit_price_krw"] is not None else None
+        ),
         "thumb_url": _media_url(r["thumb_path"])["url"] if r["thumb_path"] else None,
     } for r in rows]
     total = q1(f"select sum(s.sale_amount_krw) t from healthweb.sale_item s where {where}", **binds)
