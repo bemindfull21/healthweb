@@ -35,6 +35,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **홈 화면 아이콘**: `icon-512.png`/`icon-192.png`/`apple-touch-icon.png` — 초록/로즈 대각 분할 + 흰 M, `scripts/make_icons.py`(Pillow,
   폰트 없이 폴리라인으로 M 그림)로 생성 — 색·모양 바꾸면 `api/venv/Scripts/python.exe scripts/make_icons.py` 재실행.
   `manifest.json`(`display:standalone`) + 4개 HTML 전부에 `apple-touch-icon`·`manifest`·`theme-color` 링크.
+- **캐시버스터**: `app.js`·`style.css`·`config.js`·`landing.js`도 아이콘과 동일하게 참조하는 HTML(`app.html`·`index.html`·`challenge.html`·
+  `about.html`·`install-guide.html`)에서 `?v=N`로 부른다(2026-09-12 도입, 현재 `v=1`). Fastly CDN이 `max-age=600`이라 버전을 안 올리면
+  배포해도 사용자는 최대 10분 넘게 옛 코드를 봄 — **네 파일 중 하나라도 고치면 참조하는 모든 HTML의 그 파일 `?v=`를 함께 올릴 것.**
+  "고쳤는데 반영이 안 됐다"는 신고가 오면 `curl -s https://bemindfull21.github.io/healthweb/app.js | grep <문자열>`로 배포된 코드부터 확인.
 - 로컬 테스트: `app.js`의 `const API` + `config.js`의 `window.HW.API` 를 `http://127.0.0.1:8971`로 `sed` (테스트 후 `git checkout config.js` + 역치환). 정적은 `python -m http.server 8080`.
   API 스모크 테스트는 **`tests/`**(저장소에 커밋됨 — 자격증명은 `tests/.env`, git 미추적). `tests/README.md` 참고, `tests/run_local_api.sh`로 기동. signup 레이트리밋 5/시간이라 스위트마다 서버 재시작.
 
