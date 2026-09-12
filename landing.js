@@ -85,7 +85,7 @@ $("form-signup").addEventListener("submit", async (e) => {
   const lid = $("signup-loginid").value.trim().toLowerCase();
   if (!/^[a-z0-9]{3,20}$/.test(lid)) return msg(m, "아이디는 영문 소문자·숫자 3–20자입니다", "err");
   const name = $("signup-name").value.trim().replace(/\s+/g, " ");
-  if (name.length < 2 || name.length > 20 || /[/@]/.test(name)) return msg(m, "이름은 2–20자이고 / @ 는 쓸 수 없습니다", "err");
+  if (name.length < 2 || name.length > 20 || /[/@]/.test(name)) return msg(m, "닉네임은 2–20자이고 / @ 는 쓸 수 없습니다", "err");
   const pw = $("signup-password").value;
   if (pw.length < 8) return msg(m, "비밀번호는 8자 이상이어야 합니다", "err");
   if (pw !== $("signup-password2").value) return msg(m, "비밀번호가 일치하지 않습니다", "err");
