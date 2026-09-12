@@ -1,6 +1,6 @@
 # ERD — `healthweb` 스키마
 
-Oracle Autonomous DB(SHINDB), `healthweb` 전용 유저로 접속. 마이그레이션 파일: `sql/010`~`sql/047` (순서대로 적용).
+Oracle Autonomous DB(SHINDB), `healthweb` 전용 유저로 접속. 마이그레이션 파일: `sql/010`~`sql/050` (순서대로 적용).
 `BLOCK`·`COMMENT`가 Oracle 예약어라 테이블명은 `user_block`·`post_comment`를 쓴다.
 
 ```mermaid
@@ -25,9 +25,11 @@ erDiagram
     APP_USER ||--o| TG_LINK_CODE : "발급받는다"
     APP_USER ||--o{ PURCHASE_ITEM : "구매 기록한다(erp_access 부여자만)"
     APP_USER ||--o{ EXPENSE_ITEM : "비용 기록한다(erp_access 부여자만)"
+    APP_USER ||--o{ SALE_ITEM : "판매 기록한다(erp_access 부여자만)"
 
     PURCHASE_ITEM }o--o| MEDIA : "영수증 원본(source_media_id)"
     PURCHASE_ITEM }o--o| MEDIA : "AI 크롭 상품 사진(thumb_media_id)"
+    PURCHASE_ITEM ||--o{ SALE_ITEM : "판매된다(purchase_item_id)"
 
     WEIGHT_ENTRY ||--o| POST : "글로 공유될 수 있다"
     WEIGHT_ENTRY }o--o| MEDIA : "진행 사진(photo_media_id)"
@@ -151,6 +153,16 @@ erDiagram
         number amount_krw "비용(원화)"
         timestamp created_at
     }
+    SALE_ITEM {
+        number id PK
+        varchar2 login_id FK
+        number purchase_item_id FK
+        varchar2 sale_date "YYYY-MM-DD, 필수"
+        number sale_qty
+        number sale_price_krw "판매가(원화, 단가)"
+        number sale_amount_krw "판매금액 = sale_price_krw*sale_qty"
+        timestamp created_at
+    }
     REPORT {
         number id PK
         varchar2 reporter FK
@@ -194,6 +206,7 @@ erDiagram
 | `047` | ERP 입고 체크 — `purchase_item`+`received`(0/1, 기본 0) + 인덱스(login_id, received) |
 | `048` | ERP 구매ID — `purchase_item`+`purchase_no`(YYYYMMDD-NNN, (login_id,purchase_no) UNIQUE)+`unit_price_krw`. 기존 1건 백필. `price_cny`/`price_krw`를 "단가×환율"에서 "단가×수량×환율(총액)"로 의미 수정 |
 | `049` | ERP 비용 — `expense_item` 신설(login_id·expense_date·item_name·amount_krw) |
+| `050` | ERP 재고/판매 — `sale_item` 신설(login_id·purchase_item_id·sale_date·sale_qty·sale_price_krw·sale_amount_krw). 남은 재고는 컬럼으로 안 두고 `purchase_item.quantity - sum(sale_item.sale_qty)`로 매번 계산 |
 
 ## 알려진 특이사항
 

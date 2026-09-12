@@ -593,6 +593,22 @@ class ExpensePatchIn(BaseModel):
     amount_krw: float
 
 
+class SaleItemIn(BaseModel):
+    purchase_item_id: int
+    sale_qty: int
+    sale_price_krw: float
+
+
+class SaleSaveIn(BaseModel):
+    items: list[SaleItemIn]
+    sale_date: str
+
+
+class SalePatchIn(BaseModel):
+    sale_qty: int
+    sale_price_krw: float
+
+
 # ---------- 헬스체크 ----------
 
 @app.get("/healthz")
@@ -2267,3 +2283,188 @@ def delete_expense(eid: int, u: dict = Depends(current_user)) -> dict:
     if not n:
         raise HTTPException(404, "없는 기록입니다")
     return {"ok": True}
+
+
+# ---------- ERP: 재고/판매 ----------
+
+@app.get("/stock")
+def list_stock(u: dict = Depends(current_user)) -> dict:
+    require_erp(u)
+    rows = qall(
+        "select * from ("
+        "  select p.id, p.purchase_no, p.product_name, p.quantity, p.unit_price_krw, "
+        "         p.quantity - coalesce(s.sold, 0) as remaining_qty "
+        "  from healthweb.purchase_item p "
+        "  left join (select purchase_item_id, sum(sale_qty) sold from healthweb.sale_item group by purchase_item_id) s "
+        "    on s.purchase_item_id = p.id "
+        "  where p.login_id = :l and p.received = 1"
+        ") where remaining_qty > 0 order by id desc",
+        l=u["login_id"],
+    )
+    items = [{
+        "purchase_item_id": r["id"], "purchase_no": r["purchase_no"], "product_name": r["product_name"],
+        "remaining_qty": r["remaining_qty"],
+        "unit_price_krw": float(r["unit_price_krw"]) if r["unit_price_krw"] is not None else None,
+        "remaining_amount_krw": (
+            float(r["unit_price_krw"]) * r["remaining_qty"] if r["unit_price_krw"] is not None else None
+        ),
+    } for r in rows]
+    return {"items": items}
+
+
+@app.post("/sales")
+def save_sales(body: SaleSaveIn, u: dict = Depends(current_user)) -> dict:
+    require_erp(u)
+    sale_date = body.sale_date.strip()
+    if not sale_date:
+        raise HTTPException(400, "판매일자를 입력해 주세요")
+    if not body.items:
+        raise HTTPException(400, "판매할 상품을 선택해 주세요")
+    ids = []
+    for it in body.items:
+        row = q1(
+            "select quantity, received from healthweb.purchase_item where id = :pid and login_id = :l",
+            pid=it.purchase_item_id, l=u["login_id"],
+        )
+        if row is None or not row["received"]:
+            raise HTTPException(404, "없는 재고입니다")
+        sold = q1(
+            "select coalesce(sum(sale_qty), 0) s from healthweb.sale_item where purchase_item_id = :pid",
+            pid=it.purchase_item_id,
+        )
+        remaining = row["quantity"] - sold["s"]
+        if it.sale_qty <= 0 or it.sale_qty > remaining:
+            raise HTTPException(400, "판매 수량이 재고 수량을 초과했습니다")
+        if it.sale_price_krw <= 0:
+            raise HTTPException(400, "판매가격을 입력해 주세요")
+        amount = round(it.sale_price_krw * it.sale_qty, 0)
+        sid = insert_id(
+            "insert into healthweb.sale_item "
+            "(login_id, purchase_item_id, sale_date, sale_qty, sale_price_krw, sale_amount_krw) "
+            "values (:l, :pid, :d, :q, :p, :a) returning id into :new_id",
+            l=u["login_id"], pid=it.purchase_item_id, d=sale_date, q=it.sale_qty, p=it.sale_price_krw, a=amount,
+        )
+        ids.append(sid)
+    return {"ids": ids}
+
+
+@app.get("/sales")
+def list_sales(
+    u: dict = Depends(current_user), date_from: Optional[str] = None, date_to: Optional[str] = None,
+) -> dict:
+    require_erp(u)
+    conds = ["s.login_id = :l"]
+    binds: dict = {"l": u["login_id"]}
+    if date_from:
+        conds.append("s.sale_date >= :df"); binds["df"] = date_from
+    if date_to:
+        conds.append("s.sale_date <= :dt"); binds["dt"] = date_to
+    where = " and ".join(conds)
+    rows = qall(
+        f"select s.id, s.sale_date, s.sale_qty, s.sale_price_krw, s.sale_amount_krw, "
+        f"p.purchase_no, p.product_name "
+        f"from healthweb.sale_item s join healthweb.purchase_item p on p.id = s.purchase_item_id "
+        f"where {where} order by s.sale_date desc, s.id desc",
+        **binds,
+    )
+    items = [{
+        "id": r["id"], "sale_date": r["sale_date"], "purchase_no": r["purchase_no"], "product_name": r["product_name"],
+        "sale_qty": r["sale_qty"], "sale_price_krw": float(r["sale_price_krw"]),
+        "sale_amount_krw": float(r["sale_amount_krw"]),
+    } for r in rows]
+    total = q1(f"select sum(s.sale_amount_krw) t from healthweb.sale_item s where {where}", **binds)
+    return {"items": items, "total_krw": float(total["t"]) if total and total["t"] is not None else 0}
+
+
+@app.patch("/sales/{sid}")
+def update_sale(sid: int, body: SalePatchIn, u: dict = Depends(current_user)) -> dict:
+    require_erp(u)
+    row = q1(
+        "select purchase_item_id from healthweb.sale_item where id = :i and login_id = :l",
+        i=sid, l=u["login_id"],
+    )
+    if row is None:
+        raise HTTPException(404, "없는 기록입니다")
+    pid = row["purchase_item_id"]
+    prow = q1("select quantity from healthweb.purchase_item where id = :pid", pid=pid)
+    others = q1(
+        "select coalesce(sum(sale_qty), 0) s from healthweb.sale_item where purchase_item_id = :pid and id != :i",
+        pid=pid, i=sid,
+    )
+    capacity = prow["quantity"] - others["s"]
+    if body.sale_qty <= 0 or body.sale_qty > capacity:
+        raise HTTPException(400, "판매 수량이 재고 수량을 초과했습니다")
+    if body.sale_price_krw <= 0:
+        raise HTTPException(400, "판매가격을 입력해 주세요")
+    amount = round(body.sale_price_krw * body.sale_qty, 0)
+    dml(
+        "update healthweb.sale_item set sale_qty = :q, sale_price_krw = :p, sale_amount_krw = :a where id = :i",
+        q=body.sale_qty, p=body.sale_price_krw, a=amount, i=sid,
+    )
+    return {"ok": True}
+
+
+# ---------- ERP: 손익 ----------
+
+_YM_RE = re.compile(r"^\d{4}-\d{2}$")
+
+
+def _month_range(mf: str, mt: str) -> list[str]:
+    y1, m1 = int(mf[:4]), int(mf[5:7])
+    y2, m2 = int(mt[:4]), int(mt[5:7])
+    months = []
+    y, m = y1, m1
+    while (y, m) <= (y2, m2):
+        months.append(f"{y:04d}-{m:02d}")
+        m += 1
+        if m > 12:
+            m = 1
+            y += 1
+    return months
+
+
+@app.get("/profit")
+def get_profit(u: dict = Depends(current_user), month_from: str = "", month_to: str = "") -> dict:
+    require_erp(u)
+    mf, mt = month_from.strip(), month_to.strip()
+    if not _YM_RE.match(mf) or not _YM_RE.match(mt):
+        raise HTTPException(400, "조회 시작월/종료월을 YYYY-MM 형식으로 입력해 주세요")
+    if mf > mt:
+        raise HTTPException(400, "시작월이 종료월보다 늦을 수 없습니다")
+    months = _month_range(mf, mt)
+    if len(months) > 60:
+        raise HTTPException(400, "조회 기간이 너무 깁니다")
+
+    rev_rows = qall(
+        "select substr(s.sale_date, 1, 7) ym, sum(s.sale_amount_krw) revenue, "
+        "sum(s.sale_qty * nvl(p.unit_price_krw, 0)) cogs "
+        "from healthweb.sale_item s join healthweb.purchase_item p on p.id = s.purchase_item_id "
+        "where s.login_id = :l and substr(s.sale_date, 1, 7) between :mf and :mt "
+        "group by substr(s.sale_date, 1, 7)",
+        l=u["login_id"], mf=mf, mt=mt,
+    )
+    exp_rows = qall(
+        "select substr(expense_date, 1, 7) ym, sum(amount_krw) expense from healthweb.expense_item "
+        "where login_id = :l and substr(expense_date, 1, 7) between :mf and :mt "
+        "group by substr(expense_date, 1, 7)",
+        l=u["login_id"], mf=mf, mt=mt,
+    )
+    rev_by_ym = {r["ym"]: r for r in rev_rows}
+    exp_by_ym = {r["ym"]: r for r in exp_rows}
+
+    result = []
+    tot_revenue = tot_cogs = tot_expense = 0.0
+    for ym in months:
+        rv = rev_by_ym.get(ym)
+        ex = exp_by_ym.get(ym)
+        revenue = float(rv["revenue"]) if rv and rv["revenue"] is not None else 0.0
+        cogs = float(rv["cogs"]) if rv and rv["cogs"] is not None else 0.0
+        expense = float(ex["expense"]) if ex and ex["expense"] is not None else 0.0
+        profit = revenue - (cogs + expense)
+        result.append({"month": ym, "revenue": revenue, "cogs": cogs, "expense": expense, "profit": profit})
+        tot_revenue += revenue; tot_cogs += cogs; tot_expense += expense
+    total = {
+        "revenue": tot_revenue, "cogs": tot_cogs, "expense": tot_expense,
+        "profit": tot_revenue - (tot_cogs + tot_expense),
+    }
+    return {"months": result, "total": total}

@@ -126,6 +126,11 @@
 | GET | `/expenses?date_from=&date_to=` | ✓(erp_access) | — | `expense_date` 기준 기간 필터(둘 다 생략 시 전체). `expense_date desc, id desc` 정렬. `{items:[...], total_krw}` |
 | PATCH | `/expenses/:id` | ✓(erp_access) | `amount_krw: float` | 금액 수정. 본인 기록만(아니면 404) |
 | DELETE | `/expenses/:id` | ✓(erp_access) | — | 본인 기록만(아니면 404) |
+| GET | `/stock` | ✓(erp_access) | — | `received=1`이고 `quantity - sum(sale_qty) > 0`인 구매 건 목록(남은 재고는 저장 컬럼이 아니라 매번 `sale_item` 집계로 계산). 각 item: `purchase_item_id`·`purchase_no`·`product_name`·`remaining_qty`·`unit_price_krw`·`remaining_amount_krw`(=단가×남은수량) |
+| POST | `/sales` | ✓(erp_access) | `items[](purchase_item_id, sale_qty, sale_price_krw), sale_date` | 항목마다 `purchase_item_id`가 본인 소유·`received=1`인지 확인 후, `sale_qty`가 그 시점 남은 재고를 넘으면 400. `sale_amount_krw = round(sale_price_krw*sale_qty)` 계산해 저장. `{ids:[...]}` 반환 |
+| GET | `/sales?date_from=&date_to=` | ✓(erp_access) | — | `sale_date` 기준 기간 필터(생략 시 전체). `purchase_item` 조인으로 `purchase_no`·`product_name` 포함. `{items:[...], total_krw}` |
+| PATCH | `/sales/:id` | ✓(erp_access) | `sale_qty: int, sale_price_krw: float` | 판매수량/가격 수정. 새 `sale_qty`는 "그 구매건 수량 − 이 판매를 뺀 다른 판매의 합"(capacity)을 넘으면 400 — 즉 원래 구매 수량 내에서만 재배분 가능. `sale_amount_krw` 재계산. 본인 기록만(아니면 404) |
+| GET | `/profit?month_from=&month_to=` | ✓(erp_access) | — | 둘 다 `YYYY-MM` 필수(형식 오류·누락 400, `month_from>month_to` 400, 60개월 초과 400). 월별 `revenue`(=그 달 `sale_amount_krw` 합)·`cogs`(=그 달 판매수량×해당 구매건 `unit_price_krw` 합, 매출 인식 시점 기준 — 구매 시점이 아님)·`expense`(그 달 `expense_item` 합)·`profit`(`revenue-(cogs+expense)`)을 데이터 없는 달도 0으로 채워서 반환. `{months:[...], total:{...}}` |
 
 ## 기타
 

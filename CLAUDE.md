@@ -130,6 +130,12 @@ reflection→reflect, question→casual) 후 체크 제약 교체. 몸무게 공
 `sql/049_expense.sql` (**적용됨** — healthweb 유저): `expense_item`(login_id·expense_date·item_name·amount_krw) 신설.
 ERP "비용" 탭 — `POST/GET/PATCH/DELETE /expenses`, `purchase_item`과 동일하게 `erp_access` 게이팅 + 본인 기록만 수정/삭제(아니면 404).
 
+`sql/050_sale.sql` (**적용됨** — healthweb 유저): `sale_item`(login_id·purchase_item_id→purchase_item·sale_date·sale_qty·
+sale_price_krw·sale_amount_krw) 신설. ERP "재고"·"판매" 탭의 기반 — 남은 재고는 컬럼으로 안 두고 매 조회마다
+`purchase_item.quantity - sum(sale_item.sale_qty)`로 계산(동기화 버그 방지). `GET /stock`은 `received=1`이고 이 계산값이
+0보다 큰 구매 건만 보여줌. `POST /sales`·`PATCH /sales/:id` 모두 저장/수정 시점에 남은 재고(수정은 "그 판매를 제외한 다른
+판매의 합"을 기준으로 한 여유분)를 다시 계산해서 초과하면 400 — 클라이언트가 보낸 값을 신뢰하지 않음.
+
 ## VM 배포 (memo-agent)
 
 - `/opt/health-web-api/` : `healthweb-api.service`(uvicorn :8000) + `caddy.service`(`healthweb21.duckdns.org`).
@@ -165,12 +171,12 @@ ERP "비용" 탭 — `POST/GET/PATCH/DELETE /expenses`, `purchase_item`과 동�
 `NotificationsView` 는 `kind==='rank'` 항목을 "🎉 {뱃지} 등급이 되었어요"로 특수 렌더, 클릭 시 `/me`.
 CSS: `--rank-1~5`/`--rank-N-soft` 토큰(라이트/다크) + `.rank-badge`, 다이아몬드만 그라디언트+보더로 차별화.
 
-## ERP 구매 기록 (2026-09-12) — 구현·배포됨
+## ERP 구매·비용·재고·판매·손익 (2026-09-12~13) — 구현·배포됨
 
 타오바오 등 주문내역 스크린샷 → Gemini 비전으로 상품·위안화 가격 자동 추출 → 위안화+원화(무료 환율 API, `open.er-api.com`) 저장.
 커뮤니티 핵심 기능과 무관한 **오너 지정 개인 유틸리티** — 오너가 `ProfileView` ⋯메뉴에서 사용자별로 `erp_access` 켜고 끔.
 탭바는 `me.erp_access` 가 true 인 사용자에게만 6번째 "ERP" 탭 노출(`.tabbar-6`), 나머지는 기존 5개.
-프론트: `ErpView`(`app.js`) — 상단 서브메뉴 "구매/비용/재고/판매/손익"(`.seg`, 순차 구현 예정 — 현재 구매·비용만 동작, 나머지는 준비 중 안내).
+프론트: `ErpView`(`app.js`) — 상단 서브메뉴 "구매/비용/재고/판매/손익"(`.seg`, 5개 전부 구현·배포됨).
 `ErpPurchaseView` = 영수증 업로드(`ImageUpload kind="receipt"`) → `/purchases/extract` 호출 → 추출 결과 편집 가능한 표
 (사진 썸네일·상점·상품명·옵션·수량·¥·₩) → **주문일 입력(필수, 미입력 시 저장 버튼 비활성 + 서버도 400)** → 저장 → 조회 필터
 (시작일·종료일, 기본값 최근 7일 — 프론트가 로컬 타임존 기준으로 계산해 채움 · "미입고만 보기" 체크 시 기간 무시하고 `received=0`인
@@ -184,6 +190,20 @@ CSS: `--rank-1~5`/`--rank-N-soft` 토큰(라이트/다크) + `.rank-badge`, 다�
 `ErpExpenseView` = 등록 폼(일자·항목·₩, "추가" 버튼) → 기간 필터(시작일·종료일, 기본값 최근 7일, 필터 바뀌면 자동 재조회) →
 누적 목록(항목명·일자, 금액 입력칸은 `onBlur`에 바뀐 값만 `PATCH /expenses/:id`로 저장 — 구매 탭의 입고 체크박스처럼 별도
 저장 버튼 없이 즉시 저장하는 패턴 재사용) · 개별 삭제(✕ + `confirm()`).
+
+`ErpStockView` = `GET /stock` 목록(입고O·미판매 남은수량>0인 구매 건, 상품명·구매ID·재고수량·개당단가·남은금액) → 체크박스로
+판매할 항목 선택하면 그 줄에 수량(기본 1)·판매가(기본값=구매 단가원화, 수정 가능) 입력칸이 펼쳐짐 → 상단 판매일 하나를 공유해서
+체크된 항목 전부를 `POST /sales`로 한 번에 저장(구매 탭의 "여러 줄 draft 한 번에 저장" 패턴과 동일). 서버가 각 항목마다
+재고 초과 여부를 다시 계산해서 검증(클라이언트 값 불신).
+
+`ErpSalesView` = 기간 필터(시작일·종료일, 기본값 최근 7일) → 목록(상품명·구매ID·판매일자, 수량/가격 입력칸은 비용 탭과 동일하게
+`onBlur`로 `PATCH /sales/:id` 즉시 저장, 판매금액은 그 자리에서 재계산). 수량을 원래 구매 수량보다 늘리면 서버가 400.
+삭제 기능은 없음(요구사항에 없어 미구현 — 잘못 입력한 판매는 수량/가격 수정으로만 정정 가능).
+
+`ErpProfitView` = 시작월·종료월(`<input type="month">`, 기본값 최근 3개월) → `GET /profit` → 월별 매출·구매원가·비용·수익
+표(데이터 없는 달도 0으로 표시) + 합계 행. 구매원가는 "그 달 매입한 총액"이 아니라 "그 달 판매된 수량 × 그 구매건의
+단가(원화)" — 매출 인식 시점(판매일 기준)에 맞춰야 수익 계산이 왜곡되지 않기 때문(요구사항 문서엔 명시 안 됐지만, 매출과
+같은 달 기준으로 맞추지 않으면 특정 달에 다 사놓고 다음 달에 파는 경우 그 달 수익이 실제와 반대로 나옴).
 
 ## 미완 (Phase 3c+)
 

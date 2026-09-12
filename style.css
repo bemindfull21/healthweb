@@ -543,3 +543,17 @@ img.avatar { object-fit: cover; display: block; }
   width: 100px; flex-shrink: 0; text-align: right; margin: 0;
   font-variant-numeric: tabular-nums;
 }
+
+.stock-sale-fields { margin-top: 6px; }
+.sale-edit-fields { flex-shrink: 0; width: 140px; }
+.sale-edit-fields input { width: 100%; margin: 0; text-align: right; font-variant-numeric: tabular-nums; }
+
+.profit-table { font-variant-numeric: tabular-nums; }
+.profit-row {
+  display: grid; grid-template-columns: 1.2fr 1fr 1fr 1fr 1fr; gap: 6px;
+  padding: 8px 4px; border-bottom: 1px solid var(--border); font-size: .85rem; text-align: right;
+}
+.profit-row span:first-child { text-align: left; }
+.profit-head { font-weight: 700; color: var(--muted); font-size: .75rem; border-bottom: 2px solid var(--border); }
+.profit-total { font-weight: 700; border-bottom: 0; border-top: 2px solid var(--border); }
+.profit-row .neg { color: var(--error); }

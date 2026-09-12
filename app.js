@@ -1079,9 +1079,9 @@ function ErpView() {
     </div>
     ${tab === "purchase" && html`<${ErpPurchaseView} />`}
     ${tab === "expense" && html`<${ErpExpenseView} />`}
-    ${tab === "stock" && html`<div class="empty">재고 기능은 준비 중이에요.</div>`}
-    ${tab === "sales" && html`<div class="empty">판매 기능은 준비 중이에요.</div>`}
-    ${tab === "profit" && html`<div class="empty">손익 기능은 준비 중이에요.</div>`}
+    ${tab === "stock" && html`<${ErpStockView} />`}
+    ${tab === "sales" && html`<${ErpSalesView} />`}
+    ${tab === "profit" && html`<${ErpProfitView} />`}
   </div>`;
 }
 
@@ -1350,6 +1350,198 @@ function ErpExpenseView() {
               onBlur=${(e) => updAmount(x, e.target.value)} />
             <button class="row-del" onClick=${() => del(x.id)}>✕</button>
           </div>`)}
+  </div>`;
+}
+
+function ErpStockView() {
+  const { toast } = useStore();
+  const [items, setItems] = useState(null);
+  const [sel, setSel] = useState({});
+  const [saving, setSaving] = useState(false);
+
+  const today = new Date();
+  today.setMinutes(today.getMinutes() - today.getTimezoneOffset());
+  const [saleDate, setSaleDate] = useState(today.toISOString().slice(0, 10));
+
+  const load = useCallback(async () => {
+    try { setItems((await api("/stock")).items); }
+    catch (e) { setItems([]); }
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  const setRow = (id, patch) => setSel((s) => ({ ...s, [id]: { ...(s[id] || {}), ...patch } }));
+
+  const save = async () => {
+    const chosen = (items || []).filter((it) => sel[it.purchase_item_id]?.checked);
+    if (!chosen.length) return toast("판매할 상품을 선택해 주세요", "err");
+    if (!saleDate) return toast("판매일자를 입력해 주세요", "err");
+    setSaving(true);
+    try {
+      await api("/sales", {
+        method: "POST",
+        body: {
+          sale_date: saleDate,
+          items: chosen.map((it) => ({
+            purchase_item_id: it.purchase_item_id,
+            sale_qty: Number(sel[it.purchase_item_id].qty ?? 1),
+            sale_price_krw: Number(sel[it.purchase_item_id].price ?? it.unit_price_krw ?? 0),
+          })),
+        },
+      });
+      toast("판매를 저장했습니다");
+      setSel({});
+      load();
+    } catch (e) { toast(e.detail, "err"); }
+    finally { setSaving(false); }
+  };
+
+  return html`<div>
+    <div class="panel">
+      <label>판매일<input type="date" value=${saleDate} onInput=${(e) => setSaleDate(e.target.value)} /></label>
+    </div>
+
+    ${items === null
+      ? html`<${Spinner} />`
+      : items.length === 0
+        ? html`<div class="empty">재고가 없어요.</div>`
+        : items.map((it) => {
+            const s = sel[it.purchase_item_id] || {};
+            return html`<div class="erp-item" key=${it.purchase_item_id}>
+              <label class="erp-received" title="판매할 상품 선택">
+                <input type="checkbox" checked=${!!s.checked}
+                  onInput=${(e) => setRow(it.purchase_item_id, { checked: e.target.checked })} />
+              </label>
+              <div class="erp-item-main">
+                <b>${it.product_name}</b>
+                <div class="muted sm">${it.purchase_no} · 재고 ${it.remaining_qty} · 개당 ₩${Math.round(it.unit_price_krw || 0).toLocaleString()}</div>
+                ${s.checked && html`<div class="erp-row-fields stock-sale-fields">
+                  <input type="number" placeholder="판매수량" min="1" max=${it.remaining_qty}
+                    value=${s.qty ?? 1} onInput=${(e) => setRow(it.purchase_item_id, { qty: e.target.value })} />
+                  <input type="number" placeholder="판매가(₩)" value=${s.price ?? it.unit_price_krw ?? ""}
+                    onInput=${(e) => setRow(it.purchase_item_id, { price: e.target.value })} />
+                </div>`}
+              </div>
+              <div class="erp-item-price">₩${Math.round(it.remaining_amount_krw || 0).toLocaleString()}</div>
+            </div>`;
+          })}
+    ${items && items.length > 0 && html`<button disabled=${saving} onClick=${save}>판매 저장</button>`}
+  </div>`;
+}
+
+function ErpSalesView() {
+  const { toast } = useStore();
+  const [items, setItems] = useState(null);
+  const [total, setTotal] = useState(0);
+
+  const today = new Date();
+  today.setMinutes(today.getMinutes() - today.getTimezoneOffset());
+  const todayStr = today.toISOString().slice(0, 10);
+  const weekAgo = new Date(today); weekAgo.setDate(weekAgo.getDate() - 6);
+  const weekAgoStr = weekAgo.toISOString().slice(0, 10);
+  const [dateFrom, setDateFrom] = useState(weekAgoStr);
+  const [dateTo, setDateTo] = useState(todayStr);
+
+  const load = useCallback(async () => {
+    try {
+      const qs = new URLSearchParams();
+      if (dateFrom) qs.set("date_from", dateFrom);
+      if (dateTo) qs.set("date_to", dateTo);
+      const d = await api(`/sales?${qs.toString()}`);
+      setItems(d.items);
+      setTotal(d.total_krw || 0);
+    } catch (e) { setItems([]); }
+  }, [dateFrom, dateTo]);
+  useEffect(() => { load(); }, [load]);
+
+  const upd = async (item, patch) => {
+    const qty = patch.sale_qty !== undefined ? Number(patch.sale_qty) : item.sale_qty;
+    const price = patch.sale_price_krw !== undefined ? Number(patch.sale_price_krw) : item.sale_price_krw;
+    if (!qty || !price || (qty === item.sale_qty && price === item.sale_price_krw)) return;
+    setItems((l) => l.map((x) => (x.id === item.id
+      ? { ...x, sale_qty: qty, sale_price_krw: price, sale_amount_krw: qty * price } : x)));
+    try {
+      await api(`/sales/${item.id}`, { method: "PATCH", body: { sale_qty: qty, sale_price_krw: price } });
+      load();
+    } catch (e) {
+      toast(e.detail, "err");
+      setItems((l) => l.map((x) => (x.id === item.id ? item : x)));
+    }
+  };
+
+  return html`<div>
+    <div class="panel erp-filter">
+      <div class="erp-filter-row">
+        <label>시작일<input type="date" value=${dateFrom} onInput=${(e) => setDateFrom(e.target.value)} /></label>
+        <label>종료일<input type="date" value=${dateTo} onInput=${(e) => setDateTo(e.target.value)} /></label>
+      </div>
+    </div>
+
+    <div class="erp-total">누적 ₩${Math.round(total).toLocaleString()}</div>
+
+    ${items === null
+      ? html`<${Spinner} />`
+      : items.length === 0
+        ? html`<div class="empty">판매 내역이 없어요.</div>`
+        : items.map((x) => html`<div class="erp-item" key=${x.id}>
+            <div class="erp-item-main">
+              <b>${x.product_name}</b>
+              <div class="muted sm">${x.purchase_no} · ${x.sale_date}</div>
+            </div>
+            <div class="erp-row-fields sale-edit-fields">
+              <input type="number" value=${x.sale_qty} onBlur=${(e) => upd(x, { sale_qty: e.target.value })} />
+              <input type="number" value=${x.sale_price_krw} onBlur=${(e) => upd(x, { sale_price_krw: e.target.value })} />
+            </div>
+            <div class="erp-item-price">₩${Math.round(x.sale_amount_krw).toLocaleString()}</div>
+          </div>`)}
+  </div>`;
+}
+
+function ErpProfitView() {
+  const now = new Date();
+  const ymNow = now.toISOString().slice(0, 7);
+  const threeAgo = new Date(now.getFullYear(), now.getMonth() - 2, 1);
+  const ymFrom0 = threeAgo.toISOString().slice(0, 7);
+  const [monthFrom, setMonthFrom] = useState(ymFrom0);
+  const [monthTo, setMonthTo] = useState(ymNow);
+  const [rows, setRows] = useState(null);
+  const [total, setTotal] = useState(null);
+
+  const load = useCallback(async () => {
+    try {
+      const d = await api(`/profit?month_from=${monthFrom}&month_to=${monthTo}`);
+      setRows(d.months);
+      setTotal(d.total);
+    } catch (e) { setRows([]); setTotal(null); }
+  }, [monthFrom, monthTo]);
+  useEffect(() => { load(); }, [load]);
+
+  const won = (n) => `₩${Math.round(n || 0).toLocaleString()}`;
+
+  return html`<div>
+    <div class="panel erp-filter">
+      <div class="erp-filter-row">
+        <label>시작월<input type="month" value=${monthFrom} onInput=${(e) => setMonthFrom(e.target.value)} /></label>
+        <label>종료월<input type="month" value=${monthTo} onInput=${(e) => setMonthTo(e.target.value)} /></label>
+      </div>
+    </div>
+
+    ${rows === null
+      ? html`<${Spinner} />`
+      : html`<div class="profit-table">
+          <div class="profit-row profit-head">
+            <span>월</span><span>매출</span><span>구매원가</span><span>비용</span><span>수익</span>
+          </div>
+          ${rows.length === 0
+            ? html`<div class="empty">데이터가 없어요.</div>`
+            : rows.map((r) => html`<div class="profit-row" key=${r.month}>
+                <span>${r.month}</span><span>${won(r.revenue)}</span><span>${won(r.cogs)}</span>
+                <span>${won(r.expense)}</span><span class=${r.profit < 0 ? "neg" : ""}>${won(r.profit)}</span>
+              </div>`)}
+          ${total && rows.length > 0 && html`<div class="profit-row profit-total">
+            <span>합계</span><span>${won(total.revenue)}</span><span>${won(total.cogs)}</span>
+            <span>${won(total.expense)}</span><span class=${total.profit < 0 ? "neg" : ""}>${won(total.profit)}</span>
+          </div>`}
+        </div>`}
   </div>`;
 }
 
