@@ -174,7 +174,7 @@ def current_user(authorization: str = Header(default="")) -> dict:
         raise HTTPException(401, "세션이 만료되었습니다. 다시 로그인해 주세요")
     u = q1(
         "select au.login_id, au.name, au.bio, au.link, au.location, au.pinned_post_id, "
-        "au.target_weight, au.weight_privacy, au.avatar_media_id, au.tg_chat_id, au.rank_level, "
+        "au.target_weight, au.weight_privacy, au.avatar_media_id, au.tg_chat_id, au.rank_level, au.rank_score, "
         "m.path avatar_path, m.thumb_path avatar_thumb "
         "from healthweb.app_user au "
         "left join healthweb.media m on m.id = au.avatar_media_id "
@@ -651,6 +651,7 @@ def me(u: dict = Depends(current_user)) -> dict:
         "weight_privacy": u["weight_privacy"],
         "rank_level": u["rank_level"],
         "rank_name": RANK_NAMES[u["rank_level"]],
+        "rank_score": u["rank_score"],
     }
     if OWNER_LOGIN_ID and u["login_id"] == OWNER_LOGIN_ID:
         out["is_owner"] = True

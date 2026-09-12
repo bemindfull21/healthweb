@@ -500,6 +500,8 @@ function MeView() {
           : html`${fmtKg(Math.abs(last.weight - target))} <small>kg ${last.weight > target ? "감량" : "증량"}</small>`}</div></div>`}
       <div class="stat"><div class="k">연속 기록</div><div class="v">${streakOf(entries)} <small>일</small></div></div>
       <div class="stat"><div class="k">기록 수</div><div class="v">${entries.length} <small>건</small></div></div>
+      <div class="stat"><div class="k">M 스코어</div><div class="v">${me ? me.rank_score : "–"}</div></div>
+      <div class="stat"><div class="k">M 단계</div><div class="v">${me ? me.rank_name : "–"}</div></div>
     </div>
 
     ${entries.length === 0

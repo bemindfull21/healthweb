@@ -13,7 +13,7 @@
 | POST | `/auth/signup` | ✗ | `login_id, name, password, target_weight?` | 가입, `{token}` 반환 |
 | POST | `/auth/signin` | ✗ | `login_id, password` | 로그인, `{token}` |
 | POST | `/auth/reset` | ✗ | `login_id, name, new_password` | 이름 일치 확인 후 재설정 |
-| GET | `/auth/me` | ✓ | — | 내 정보 + `rank_level/rank_name` + (오너면) `is_owner, open_reports` |
+| GET | `/auth/me` | ✓ | — | 내 정보 + `rank_level/rank_name/rank_score` + (오너면) `is_owner, open_reports` |
 | PATCH | `/auth/me` | ✓ | `MePatch` (전부 optional) | `avatar_media_id`/`pinned_post_id` ≤0 = 제거, 비밀번호 변경 시 `current_password` 필요 |
 
 ## 몸무게
