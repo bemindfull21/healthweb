@@ -36,7 +36,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   폰트 없이 폴리라인으로 M 그림)로 생성 — 색·모양 바꾸면 `api/venv/Scripts/python.exe scripts/make_icons.py` 재실행.
   `manifest.json`(`display:standalone`) + 4개 HTML 전부에 `apple-touch-icon`·`manifest`·`theme-color` 링크.
 - **캐시버스터**: `app.js`·`style.css`·`config.js`·`landing.js`도 아이콘과 동일하게 참조하는 HTML(`app.html`·`index.html`·`challenge.html`·
-  `about.html`·`install-guide.html`)에서 `?v=N`로 부른다(2026-09-12 도입, 파일별로 따로 버전 관리 — 현재 `app.js`는 `v=7`,
+  `about.html`·`install-guide.html`)에서 `?v=N`로 부른다(2026-09-12 도입, 파일별로 따로 버전 관리 — 현재 `app.js`는 `v=8`,
   `style.css`는 `v=6`, `config.js`/`landing.js`는 `v=1`). Fastly CDN이 `max-age=600`이라 버전을 안 올리면
   배포해도 사용자는 최대 10분 넘게 옛 코드를 봄 — **네 파일 중 하나라도 고치면 참조하는 모든 HTML의 그 파일 `?v=`를 함께 올릴 것.**
   "고쳤는데 반영이 안 됐다"는 신고가 오면 `curl -s https://bemindfull21.github.io/healthweb/app.js | grep <문자열>`로 배포된 코드부터 확인.
