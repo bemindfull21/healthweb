@@ -1,0 +1,367 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="light dark" />
+  <title>앱 설치 방법 · 마이웨이트, 마이러브</title>
+  <meta name="description" content="안드로이드·아이폰에서 마이웨이트, 마이러브를 홈 화면에 앱처럼 설치하는 방법." />
+  <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
+  <link rel="apple-touch-icon" href="./apple-touch-icon.png?v=5" />
+  <link rel="manifest" href="./manifest.json" />
+  <meta name="theme-color" content="#2f6b4f" />
+  <link rel="stylesheet" href="./style.css" />
+  <style>
+    .copy-box { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 14px; margin-bottom: 22px; }
+    .copy-row { display: flex; gap: 8px; margin-top: 8px; }
+    .copy-row code { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      background: var(--card-2); border-radius: 8px; padding: 8px 10px; font-size: .8rem; color: var(--text); }
+    .copy-row button { flex-shrink: 0; }
+
+    .platform-tabs { margin-bottom: 20px; }
+
+    .step-card { display: flex; gap: 14px; align-items: flex-start; margin-bottom: 22px; }
+    .step-num {
+      flex-shrink: 0; width: 26px; height: 26px; border-radius: 50%;
+      background: var(--accent); color: #fff; font-weight: 700; font-size: .85rem;
+      display: grid; place-items: center; margin-top: 2px;
+    }
+    .step-body { flex: 1; min-width: 0; }
+    .step-text { margin: 10px 0 0; line-height: 1.6; }
+    .step-text b { color: var(--text); }
+
+    .phone-mock {
+      width: 190px; border: 3px solid var(--text); border-radius: 20px; overflow: hidden;
+      background: var(--card); box-shadow: 0 4px 16px -6px rgba(0,0,0,.25); position: relative;
+    }
+    .phone-notch { height: 12px; background: var(--text); position: relative; }
+    .phone-notch::after {
+      content: ""; position: absolute; left: 50%; top: 3px; transform: translateX(-50%);
+      width: 44px; height: 6px; background: var(--card); border-radius: 4px;
+    }
+    .chrome-bar { display: flex; align-items: center; gap: 6px; padding: 7px 7px; background: var(--card-2); border-bottom: 1px solid var(--border); }
+    .addr-pill {
+      flex: 1; min-width: 0; background: var(--card); border: 1px solid var(--border); border-radius: 999px;
+      padding: 5px 9px; font-size: .64rem; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .addr-pill.filled { color: var(--text); }
+    .chrome-icon {
+      width: 20px; height: 20px; border-radius: 50%; flex-shrink: 0;
+      display: grid; place-items: center; font-size: .8rem; color: var(--muted);
+    }
+    .hl { color: #fff !important; background: var(--accent); box-shadow: 0 0 0 4px var(--accent-soft); animation: tap-pulse 1.6s ease-in-out infinite; }
+    @media (prefers-reduced-motion: reduce) { .hl { animation: none; } }
+    @keyframes tap-pulse {
+      0%, 100% { box-shadow: 0 0 0 3px var(--accent-soft); }
+      50% { box-shadow: 0 0 0 7px var(--accent-soft); }
+    }
+
+    .page-preview { padding: 14px 12px 16px; background: var(--bg); }
+    .pp-word { height: 12px; width: 68%; margin: 0 auto 8px; border-radius: 4px; background: linear-gradient(90deg, var(--accent) 50%, var(--love) 50%); }
+    .pp-line { height: 6px; border-radius: 3px; background: var(--card-2); margin-bottom: 6px; }
+    .pp-line.short { width: 60%; }
+    .pp-btn { height: 18px; border-radius: 6px; background: var(--accent); opacity: .5; margin-top: 10px; }
+
+    .ios-toolbar { display: flex; justify-content: space-around; align-items: center; padding: 8px 4px; background: var(--card-2); border-top: 1px solid var(--border); }
+    .ios-toolbar .chrome-icon { color: var(--muted); }
+
+    .sheet-mock { background: var(--card); border-top: 1px solid var(--border); }
+    .sheet-icons { display: flex; gap: 8px; padding: 10px 10px 6px; }
+    .sheet-icon { width: 30px; height: 30px; border-radius: 8px; background: var(--card-2); flex-shrink: 0; }
+    .sheet-list .mi { padding: 8px 12px; font-size: .68rem; border-top: 1px solid var(--border); color: var(--text); }
+    .sheet-list .mi.hl { background: var(--accent-soft); color: var(--accent) !important; font-weight: 700; box-shadow: none; animation: none; }
+
+    .menu-pop-mock {
+      margin: 0 8px 12px auto; width: 132px; background: var(--card); border: 1px solid var(--border);
+      border-radius: 10px; box-shadow: 0 6px 16px -6px rgba(0,0,0,.3); overflow: hidden;
+    }
+    .menu-pop-mock .mi { padding: 7px 10px; font-size: .66rem; border-bottom: 1px solid var(--border); color: var(--text); }
+    .menu-pop-mock .mi:last-child { border-bottom: 0; }
+    .menu-pop-mock .mi.hl { background: var(--accent-soft); color: var(--accent) !important; font-weight: 700; box-shadow: none; animation: none; }
+
+    .confirm-mock { margin: 14px 10px; padding: 12px; background: var(--card); border: 1px solid var(--border); border-radius: 12px; text-align: center; }
+    .confirm-mock img { width: 40px; height: 40px; border-radius: 10px; margin-bottom: 6px; }
+    .confirm-mock .cm-name { font-size: .74rem; font-weight: 700; margin-bottom: 2px; }
+    .confirm-mock .cm-url { font-size: .62rem; color: var(--muted); margin-bottom: 10px; }
+    .confirm-actions { display: flex; gap: 8px; }
+    .confirm-actions span { flex: 1; padding: 7px; border-radius: 8px; font-size: .7rem; font-weight: 600; background: var(--card-2); color: var(--muted); }
+    .confirm-actions span.hl { background: var(--accent); color: #fff !important; box-shadow: 0 0 0 4px var(--accent-soft); }
+
+    .confirm-header { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; border-bottom: 1px solid var(--border); }
+    .confirm-header .cancel { font-size: .68rem; color: var(--muted); }
+    .confirm-header .add { font-size: .7rem; font-weight: 700; color: var(--muted); padding: 3px 8px; border-radius: 6px; }
+  </style>
+</head>
+<body>
+  <main class="wrap landing">
+    <header class="hero">
+      <h1>앱 설치 방법</h1>
+      <p class="muted">링크를 복사해서 브라우저에 붙여넣고, 몇 번만 탭하면 홈 화면에 앱처럼 설치돼요.</p>
+    </header>
+
+    <section class="copy-box">
+      <p class="muted sm">먼저 이 주소를 복사하세요</p>
+      <div class="copy-row">
+        <code id="site-url"></code>
+        <button id="copy-btn" type="button">복사</button>
+      </div>
+      <p id="copy-msg" class="form-msg" hidden></p>
+    </section>
+
+    <div class="tabs platform-tabs">
+      <button class="tab on" data-p="android" type="button">안드로이드</button>
+      <button class="tab" data-p="ios" type="button">아이폰</button>
+    </div>
+
+    <section class="steps" data-platform="android">
+      <article class="step-card">
+        <div class="step-num">1</div>
+        <div class="step-body">
+          <div class="phone-mock">
+            <div class="phone-notch"></div>
+            <div class="chrome-bar">
+              <div class="addr-pill hl">검색 또는 주소 입력</div>
+              <div class="chrome-icon">⋮</div>
+            </div>
+            <div class="page-preview"></div>
+          </div>
+          <p class="step-text"><b>Chrome을 열고 주소창을 탭하세요.</b> 안드로이드 기본 브라우저인 Chrome 앱을 씁니다.</p>
+        </div>
+      </article>
+
+      <article class="step-card">
+        <div class="step-num">2</div>
+        <div class="step-body">
+          <div class="phone-mock">
+            <div class="phone-notch"></div>
+            <div class="chrome-bar">
+              <div class="addr-pill filled">healthweb21.duckdns.org</div>
+              <div class="chrome-icon">⋮</div>
+            </div>
+            <div class="page-preview">
+              <div class="pp-word"></div>
+              <div class="pp-line"></div>
+              <div class="pp-line short"></div>
+              <div class="pp-btn"></div>
+            </div>
+          </div>
+          <p class="step-text"><b>복사한 링크를 붙여넣고 이동하세요.</b> 마이웨이트, 마이러브 로그인 화면이 뜨면 성공입니다.</p>
+        </div>
+      </article>
+
+      <article class="step-card">
+        <div class="step-num">3</div>
+        <div class="step-body">
+          <div class="phone-mock">
+            <div class="phone-notch"></div>
+            <div class="chrome-bar">
+              <div class="addr-pill filled">healthweb21.duckdns.org</div>
+              <div class="chrome-icon hl">⋮</div>
+            </div>
+            <div class="page-preview">
+              <div class="pp-word"></div>
+              <div class="pp-line"></div>
+              <div class="pp-line short"></div>
+            </div>
+          </div>
+          <p class="step-text"><b>오른쪽 위 점 3개(⋮) 메뉴를 탭하세요.</b></p>
+        </div>
+      </article>
+
+      <article class="step-card">
+        <div class="step-num">4</div>
+        <div class="step-body">
+          <div class="phone-mock">
+            <div class="phone-notch"></div>
+            <div class="chrome-bar">
+              <div class="addr-pill filled">healthweb21.duckdns.org</div>
+              <div class="chrome-icon">⋮</div>
+            </div>
+            <div class="menu-pop-mock">
+              <div class="mi">새 탭</div>
+              <div class="mi hl">📲 앱 설치</div>
+              <div class="mi">즐겨찾기</div>
+              <div class="mi">공유</div>
+            </div>
+          </div>
+          <p class="step-text"><b>"앱 설치" (또는 "홈 화면에 추가")를 탭하세요.</b> 문구는 기기·Chrome 버전에 따라 조금 다를 수 있어요.</p>
+        </div>
+      </article>
+
+      <article class="step-card">
+        <div class="step-num">5</div>
+        <div class="step-body">
+          <div class="phone-mock">
+            <div class="phone-notch"></div>
+            <div class="chrome-bar">
+              <div class="addr-pill filled">healthweb21.duckdns.org</div>
+              <div class="chrome-icon">⋮</div>
+            </div>
+            <div class="confirm-mock">
+              <img src="./icon-192.png" alt="" />
+              <div class="cm-name">마이웨이트, 마이러브</div>
+              <div class="cm-url">healthweb21.duckdns.org</div>
+              <div class="confirm-actions">
+                <span>취소</span>
+                <span class="hl">설치</span>
+              </div>
+            </div>
+          </div>
+          <p class="step-text"><b>"설치"를 탭하면 끝!</b> 홈 화면에 아이콘이 생기고, 앱처럼 열 수 있어요.</p>
+        </div>
+      </article>
+    </section>
+
+    <section class="steps" data-platform="ios" hidden>
+      <article class="step-card">
+        <div class="step-num">1</div>
+        <div class="step-body">
+          <div class="phone-mock">
+            <div class="phone-notch"></div>
+            <div class="chrome-bar">
+              <div class="addr-pill hl" style="text-align:center">🔍 검색 또는 웹 사이트 이름</div>
+            </div>
+            <div class="page-preview"></div>
+            <div class="ios-toolbar">
+              <div class="chrome-icon">‹</div>
+              <div class="chrome-icon">›</div>
+              <div class="chrome-icon">⬆︎</div>
+              <div class="chrome-icon">📖</div>
+              <div class="chrome-icon">▢</div>
+            </div>
+          </div>
+          <p class="step-text"><b>Safari를 열고 주소창을 탭하세요.</b> 아이폰 기본 브라우저인 Safari 앱을 씁니다.</p>
+        </div>
+      </article>
+
+      <article class="step-card">
+        <div class="step-num">2</div>
+        <div class="step-body">
+          <div class="phone-mock">
+            <div class="phone-notch"></div>
+            <div class="chrome-bar">
+              <div class="addr-pill filled" style="text-align:center">healthweb21.duckdns.org</div>
+            </div>
+            <div class="page-preview">
+              <div class="pp-word"></div>
+              <div class="pp-line"></div>
+              <div class="pp-line short"></div>
+              <div class="pp-btn"></div>
+            </div>
+            <div class="ios-toolbar">
+              <div class="chrome-icon">‹</div>
+              <div class="chrome-icon">›</div>
+              <div class="chrome-icon">⬆︎</div>
+              <div class="chrome-icon">📖</div>
+              <div class="chrome-icon">▢</div>
+            </div>
+          </div>
+          <p class="step-text"><b>복사한 링크를 붙여넣고 이동하세요.</b> 마이웨이트, 마이러브 로그인 화면이 뜨면 성공입니다.</p>
+        </div>
+      </article>
+
+      <article class="step-card">
+        <div class="step-num">3</div>
+        <div class="step-body">
+          <div class="phone-mock">
+            <div class="phone-notch"></div>
+            <div class="chrome-bar">
+              <div class="addr-pill filled" style="text-align:center">healthweb21.duckdns.org</div>
+            </div>
+            <div class="page-preview">
+              <div class="pp-word"></div>
+              <div class="pp-line"></div>
+              <div class="pp-line short"></div>
+            </div>
+            <div class="ios-toolbar">
+              <div class="chrome-icon">‹</div>
+              <div class="chrome-icon">›</div>
+              <div class="chrome-icon hl">⬆︎</div>
+              <div class="chrome-icon">📖</div>
+              <div class="chrome-icon">▢</div>
+            </div>
+          </div>
+          <p class="step-text"><b>아래쪽 공유 버튼(⬆︎)을 탭하세요.</b> 일부 기종은 위쪽 주소창 옆에 있어요.</p>
+        </div>
+      </article>
+
+      <article class="step-card">
+        <div class="step-num">4</div>
+        <div class="step-body">
+          <div class="phone-mock">
+            <div class="sheet-mock">
+              <div class="sheet-icons">
+                <div class="sheet-icon"></div><div class="sheet-icon"></div><div class="sheet-icon"></div><div class="sheet-icon"></div>
+              </div>
+              <div class="sheet-list">
+                <div class="mi">메시지로 보내기</div>
+                <div class="mi">복사하기</div>
+                <div class="mi hl">➕ 홈 화면에 추가</div>
+                <div class="mi">읽기 목록에 추가</div>
+              </div>
+            </div>
+          </div>
+          <p class="step-text"><b>아래로 스크롤해서 "홈 화면에 추가"를 탭하세요.</b></p>
+        </div>
+      </article>
+
+      <article class="step-card">
+        <div class="step-num">5</div>
+        <div class="step-body">
+          <div class="phone-mock">
+            <div class="confirm-header">
+              <span class="cancel">취소</span>
+              <span class="add hl">추가</span>
+            </div>
+            <div class="confirm-mock" style="margin-top:0;">
+              <img src="./icon-192.png" alt="" />
+              <div class="cm-name">마이웨이트, 마이러브</div>
+              <div class="cm-url">healthweb21.duckdns.org</div>
+            </div>
+          </div>
+          <p class="step-text"><b>오른쪽 위 "추가"를 탭하면 끝!</b> 홈 화면에 아이콘이 생기고, 앱처럼 열 수 있어요.</p>
+        </div>
+      </article>
+    </section>
+
+    <p class="muted foot"><a href="./" class="link-sm">← 로그인으로 돌아가기</a></p>
+  </main>
+
+  <script>
+    "use strict";
+    var url = location.href.replace(/install-guide\.html.*$/, "");
+    document.getElementById("site-url").textContent = url;
+
+    document.getElementById("copy-btn").addEventListener("click", function () {
+      var msg = document.getElementById("copy-msg");
+      function ok() {
+        msg.textContent = "복사했습니다"; msg.className = "form-msg ok"; msg.hidden = false;
+        setTimeout(function () { msg.hidden = true; }, 2000);
+      }
+      function fail() {
+        msg.textContent = "복사에 실패했어요. 주소를 직접 선택해서 복사해 주세요.";
+        msg.className = "form-msg err"; msg.hidden = false;
+      }
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(url).then(ok, fail);
+      } else {
+        try {
+          var ta = document.createElement("textarea");
+          ta.value = url; ta.style.position = "fixed"; ta.style.opacity = "0";
+          document.body.appendChild(ta); ta.focus(); ta.select();
+          document.execCommand("copy"); document.body.removeChild(ta);
+          ok();
+        } catch (e) { fail(); }
+      }
+    });
+
+    document.querySelectorAll(".platform-tabs .tab").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        document.querySelectorAll(".platform-tabs .tab").forEach(function (b) { b.classList.toggle("on", b === btn); });
+        var p = btn.dataset.p;
+        document.querySelectorAll(".steps").forEach(function (s) { s.hidden = s.dataset.platform !== p; });
+      });
+    });
+  </script>
+</body>
+</html>

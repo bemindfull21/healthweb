@@ -22,6 +22,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | `index.html` + `landing.js` + `config.js` | 공개 랜딩 — 로그인/회원가입/비번재설정 + 다이어트 철학 글. 바닐라 JS |
 | `app.html` + `app.js` | 로그인 후 **SPA 셸** — Preact + htm (esm.sh, **빌드 없음**), history 라우팅 |
 | `404.html` | GH Pages 딥링크 폴백 (원 경로 sessionStorage → `app.html` → `app.js`가 복원) |
+| `install-guide.html` | 공개, 로그인 불필요 — 안드로이드/아이폰 홈 화면 설치 안내. 실제 스크린샷 아님, CSS로 그린 폰/브라우저 목업(하이라이트 링+펄스 애니메이션). 랜딩 "비밀번호를 잊으셨나요?" 밑에 링크 |
 | `style.css` | 공통 |
 
 - 로그인/가입 → JWT를 `localStorage["healthweb.token"]` → `app.html`. `401` → 토큰 삭제 후 랜딩.
