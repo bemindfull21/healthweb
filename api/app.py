@@ -23,7 +23,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from collections import defaultdict
-from typing import Optional
+from typing import Any, Optional
 
 import bcrypt
 import jwt
@@ -425,7 +425,8 @@ def _gc_media(mid: Optional[int]) -> None:
         "select 1 x from healthweb.app_user where avatar_media_id = :i "
         "union all select 1 from healthweb.weight_entry where photo_media_id = :i "
         "union all select 1 from healthweb.post where image_media_id = :i "
-        "union all select 1 from healthweb.purchase_item where source_media_id = :i",
+        "union all select 1 from healthweb.purchase_item where source_media_id = :i "
+        "union all select 1 from healthweb.purchase_item where thumb_media_id = :i",
         i=mid,
     ):
         return
@@ -569,6 +570,7 @@ class PurchaseItemIn(BaseModel):
     price_cny: Optional[float] = None
     price_krw: Optional[float] = None
     fx_rate: Optional[float] = None
+    thumb_media_id: Optional[int] = None
 
 
 class PurchaseSaveIn(BaseModel):
@@ -794,7 +796,8 @@ def delete_media(mid: int, u: dict = Depends(current_user)) -> dict:
         "select 1 x from healthweb.app_user where avatar_media_id = :i "
         "union all select 1 from healthweb.weight_entry where photo_media_id = :i "
         "union all select 1 from healthweb.post where image_media_id = :i "
-        "union all select 1 from healthweb.purchase_item where source_media_id = :i",
+        "union all select 1 from healthweb.purchase_item where source_media_id = :i "
+        "union all select 1 from healthweb.purchase_item where thumb_media_id = :i",
         i=mid,
     ):
         raise HTTPException(400, "사용 중인 이미지입니다. 글·기록에서 먼저 빼주세요")
@@ -1910,11 +1913,15 @@ EXTRACT_PROMPT = """이 이미지는 쇼핑몰(타오바오 등) 주문 내역 �
 
 {"items": [
   {"shop_name": "상점 이름(한국어로 번역) 또는 null", "product_name": "상품명(한국어로 번역)", "option_text": "색상·사이즈 등 옵션(한국어로 번역) 또는 null",
-   "quantity": 수량(숫자), "price_cny": 단가(위안화, 숫자만, 통화기호 제외)}
+   "quantity": 수량(숫자), "price_cny": 단가(위안화, 숫자만, 통화기호 제외),
+   "box_2d": [상품 대표 사진(썸네일) 영역의 ymin,xmin,ymax,xmax] (0~1000 정규화 정수 4개) 또는 null}
 ]}
 
 원문이 중국어 등 외국어여도 shop_name·product_name·option_text 는 반드시 자연스러운 한국어로 번역해서 넣으세요(고유명사·브랜드명은 음차 가능).
+box_2d 는 그 상품 줄에 있는 상품 사진(텍스트가 아닌 실제 이미지) 영역만 가리켜야 하며, 사진을 찾을 수 없으면 null 로 하세요.
 상품을 하나도 못 찾으면 {"items": []} 로 답하세요. price_cny 는 반드시 숫자(예: 19.9)로, 못 읽으면 null."""
+
+MAX_EXTRACT_ITEMS = 20  # 폭탄 이미지 방지용 상한 — 크롭·미디어 생성 개수 제한
 
 
 def _extract_purchase_items(raw: bytes, mime: str) -> list[dict]:
@@ -1946,6 +1953,41 @@ def _fx_cny_to_krw() -> Optional[float]:
         return float(rate) if rate else None
     except Exception:
         return None
+
+
+def _crop_purchase_thumb(raw: bytes, box: Any, login_id: str) -> Optional[dict]:
+    """box_2d([ymin,xmin,ymax,xmax], 0~1000 정규화)로 원본에서 상품 사진만 잘라 media 로 저장.
+    성공하면 {"id","path"}, 실패·유효하지 않은 box 면 None. 동기 함수 — run_in_threadpool 로 호출."""
+    try:
+        ymin, xmin, ymax, xmax = (float(v) for v in box)
+    except (TypeError, ValueError):
+        return None
+    if not (0 <= ymin < ymax <= 1000 and 0 <= xmin < xmax <= 1000):
+        return None
+    try:
+        im = Image.open(io.BytesIO(raw))
+        im = ImageOps.exif_transpose(im).convert("RGB")
+        w, h = im.size
+        x0, y0 = round(xmin / 1000 * w), round(ymin / 1000 * h)
+        x1, y1 = round(xmax / 1000 * w), round(ymax / 1000 * h)
+        if x1 - x0 < 16 or y1 - y0 < 16:
+            return None
+        crop = im.crop((x0, y0, x1, y1))
+        crop.thumbnail((THUMB_MAX, THUMB_MAX), Image.LANCZOS)
+        token = secrets.token_hex(16)
+        key = f"{token[:2]}/{token}.jpg"
+        (MEDIA_DIR / key).parent.mkdir(parents=True, exist_ok=True)
+        b = io.BytesIO()
+        crop.save(b, "JPEG", quality=80, optimize=True)
+        (MEDIA_DIR / key).write_bytes(b.getvalue())
+    except Exception:
+        return None
+    mid = insert_id(
+        "insert into healthweb.media (login_id, kind, path, thumb_path, width, height, bytes) "
+        "values (:l, 'item_thumb', :p, :p, :w, :h, :b) returning id into :new_id",
+        l=login_id, p=key, w=crop.width, h=crop.height, b=len(b.getvalue()),
+    )
+    return {"id": mid, "path": key}
 
 
 @app.patch("/admin/users/{handle}/erp-access")
@@ -1984,7 +2026,7 @@ async def extract_purchase(body: PurchaseExtractIn, u: dict = Depends(current_us
 
     rate = await run_in_threadpool(_fx_cny_to_krw)
     out = []
-    for it in raw_items:
+    for it in raw_items[:MAX_EXTRACT_ITEMS]:
         if not isinstance(it, dict):
             continue
         cny = it.get("price_cny")
@@ -1992,6 +2034,10 @@ async def extract_purchase(body: PurchaseExtractIn, u: dict = Depends(current_us
             cny = float(cny) if cny is not None else None
         except (TypeError, ValueError):
             cny = None
+        thumb = None
+        box = it.get("box_2d")
+        if isinstance(box, list) and len(box) == 4:
+            thumb = await run_in_threadpool(_crop_purchase_thumb, raw, box, u["login_id"])
         out.append({
             "shop_name": (str(it.get("shop_name")).strip() if it.get("shop_name") else None),
             "product_name": (str(it.get("product_name") or "")).strip()[:300] or "상품",
@@ -2000,6 +2046,8 @@ async def extract_purchase(body: PurchaseExtractIn, u: dict = Depends(current_us
             "price_cny": cny,
             "price_krw": round(cny * rate, 0) if (cny is not None and rate) else None,
             "fx_rate": rate,
+            "thumb_media_id": thumb["id"] if thumb else None,
+            "thumb_url": _media_url(thumb["path"])["url"] if thumb else None,
         })
     return {"items": out}
 
@@ -2015,13 +2063,14 @@ def save_purchases(body: PurchaseSaveIn, u: dict = Depends(current_user)) -> dic
         name = it.product_name.strip()[:300]
         if not name:
             continue
+        tmid = _own_media(it.thumb_media_id, u["login_id"], "item_thumb")
         pid = insert_id(
             "insert into healthweb.purchase_item "
-            "(login_id, shop_name, product_name, option_text, quantity, price_cny, price_krw, fx_rate, fx_at, order_date, source_media_id) "
-            "values (:l, :s, :p, :o, :q, :cny, :krw, :rate, :fa, :od, :m) returning id into :new_id",
+            "(login_id, shop_name, product_name, option_text, quantity, price_cny, price_krw, fx_rate, fx_at, order_date, source_media_id, thumb_media_id) "
+            "values (:l, :s, :p, :o, :q, :cny, :krw, :rate, :fa, :od, :m, :t) returning id into :new_id",
             l=u["login_id"], s=(it.shop_name or None), p=name, o=(it.option_text or None),
             q=max(1, it.quantity or 1), cny=it.price_cny, krw=it.price_krw, rate=it.fx_rate,
-            fa=utcnow() if it.fx_rate else None, od=(body.order_date or None), m=smid,
+            fa=utcnow() if it.fx_rate else None, od=(body.order_date or None), m=smid, t=tmid,
         )
         ids.append(pid)
     if not ids:
@@ -2038,10 +2087,11 @@ def list_purchases(u: dict = Depends(current_user), cursor: Optional[int] = None
     if cursor:
         binds["cur"] = cursor
     rows = qall(
-        "select id, shop_name, product_name, option_text, quantity, price_cny, price_krw, "
-        "fx_rate, order_date, source_media_id, created_at "
-        "from healthweb.purchase_item where login_id = :l " + where + " "
-        "order by id desc fetch first :lim rows only",
+        "select p.id, p.shop_name, p.product_name, p.option_text, p.quantity, p.price_cny, p.price_krw, "
+        "p.fx_rate, p.order_date, p.source_media_id, p.created_at, m.path thumb_path "
+        "from healthweb.purchase_item p left join healthweb.media m on m.id = p.thumb_media_id "
+        "where p.login_id = :l " + where + " "
+        "order by p.id desc fetch first :lim rows only",
         **binds,
     )
     items = [{
@@ -2050,6 +2100,7 @@ def list_purchases(u: dict = Depends(current_user), cursor: Optional[int] = None
         "price_cny": float(r["price_cny"]) if r["price_cny"] is not None else None,
         "price_krw": float(r["price_krw"]) if r["price_krw"] is not None else None,
         "order_date": r["order_date"], "created_at": iso_z(r["created_at"]),
+        "thumb_url": _media_url(r["thumb_path"])["url"] if r["thumb_path"] else None,
     } for r in rows]
     total = q1(
         "select sum(price_krw) s, sum(price_cny) c from healthweb.purchase_item where login_id = :l",
@@ -2066,11 +2117,12 @@ def list_purchases(u: dict = Depends(current_user), cursor: Optional[int] = None
 def delete_purchase(pid: int, u: dict = Depends(current_user)) -> dict:
     require_erp(u)
     row = q1(
-        "select source_media_id from healthweb.purchase_item where id = :i and login_id = :l",
+        "select source_media_id, thumb_media_id from healthweb.purchase_item where id = :i and login_id = :l",
         i=pid, l=u["login_id"],
     )
     if row is None:
         raise HTTPException(404, "없는 기록입니다")
     dml("delete from healthweb.purchase_item where id = :i", i=pid)
     _gc_media(row["source_media_id"])
+    _gc_media(row["thumb_media_id"])
     return {"ok": True}

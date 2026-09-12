@@ -1077,7 +1077,7 @@ function ErpView() {
   const [list, setList] = useState(null);
   const [totals, setTotals] = useState({ krw: 0, cny: 0 });
 
-  const emptyRow = () => ({ shop_name: "", product_name: "", option_text: "", quantity: 1, price_cny: "", price_krw: "" });
+  const emptyRow = () => ({ shop_name: "", product_name: "", option_text: "", quantity: 1, price_cny: "", price_krw: "", thumb_media_id: null, thumb_url: null });
 
   const load = useCallback(async () => {
     try {
@@ -1097,6 +1097,7 @@ function ErpView() {
       setDraft(r.items && r.items.length ? r.items.map((it) => ({
         shop_name: it.shop_name || "", product_name: it.product_name || "", option_text: it.option_text || "",
         quantity: it.quantity || 1, price_cny: it.price_cny ?? "", price_krw: it.price_krw ?? "",
+        thumb_media_id: it.thumb_media_id || null, thumb_url: it.thumb_url || null,
       })) : [emptyRow()]);
     } catch (e) { toast(e.detail, "err"); setDraft([emptyRow()]); }
     finally { setExtracting(false); }
@@ -1121,6 +1122,7 @@ function ErpView() {
             quantity: Number(r.quantity) || 1,
             price_cny: r.price_cny === "" ? null : Number(r.price_cny),
             price_krw: r.price_krw === "" ? null : Number(r.price_krw),
+            thumb_media_id: r.thumb_media_id || null,
           })),
           order_date: orderDate || null,
           source_media_id: receipt ? receipt.id : null,
@@ -1150,12 +1152,17 @@ function ErpView() {
       <label>주문일 (선택)
         <input type="date" value=${orderDate} onInput=${(e) => setOrderDate(e.target.value)} /></label>
       ${draft.map((row, i) => html`<div class="erp-row" key=${i}>
-        <input placeholder="상점" value=${row.shop_name} onInput=${(e) => updRow(i, "shop_name", e.target.value)} />
-        <input placeholder="상품명" value=${row.product_name} onInput=${(e) => updRow(i, "product_name", e.target.value)} />
-        <input placeholder="옵션" value=${row.option_text} onInput=${(e) => updRow(i, "option_text", e.target.value)} />
-        <input type="number" placeholder="수량" value=${row.quantity} onInput=${(e) => updRow(i, "quantity", e.target.value)} />
-        <input type="number" placeholder="¥" value=${row.price_cny} onInput=${(e) => updRow(i, "price_cny", e.target.value)} />
-        <input type="number" placeholder="₩" value=${row.price_krw} onInput=${(e) => updRow(i, "price_krw", e.target.value)} />
+        ${row.thumb_url
+          ? html`<img class="erp-thumb" src=${row.thumb_url} alt="" />`
+          : html`<div class="erp-thumb erp-thumb-empty"></div>`}
+        <div class="erp-row-fields">
+          <input placeholder="상점" value=${row.shop_name} onInput=${(e) => updRow(i, "shop_name", e.target.value)} />
+          <input placeholder="상품명" value=${row.product_name} onInput=${(e) => updRow(i, "product_name", e.target.value)} />
+          <input placeholder="옵션" value=${row.option_text} onInput=${(e) => updRow(i, "option_text", e.target.value)} />
+          <input type="number" placeholder="수량" value=${row.quantity} onInput=${(e) => updRow(i, "quantity", e.target.value)} />
+          <input type="number" placeholder="¥" value=${row.price_cny} onInput=${(e) => updRow(i, "price_cny", e.target.value)} />
+          <input type="number" placeholder="₩" value=${row.price_krw} onInput=${(e) => updRow(i, "price_krw", e.target.value)} />
+        </div>
         <button type="button" class="row-del" onClick=${() => rmRow(i)}>✕</button>
       </div>`)}
       <button type="button" class="ghost" onClick=${addRow}>+ 줄 추가</button>
@@ -1169,6 +1176,7 @@ function ErpView() {
       : list.length === 0
         ? html`<div class="empty">아직 기록이 없어요.</div>`
         : list.map((p) => html`<div class="erp-item" key=${p.id}>
+            ${p.thumb_url && html`<img class="erp-thumb" src=${p.thumb_url} alt="" />`}
             <div class="erp-item-main">
               <b>${p.product_name}</b>${p.option_text && html` <span class="muted sm">${p.option_text}</span>`}
               <div class="muted sm">${p.shop_name || ""}${p.quantity > 1 ? ` × ${p.quantity}` : ""}</div>

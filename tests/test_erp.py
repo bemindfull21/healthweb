@@ -1,7 +1,7 @@
-"""ERP(구매 기록) 스모크 — 권한 게이팅 + 추출 + 저장/조회/삭제."""
+"""ERP(구매 기록) 스모크 — 권한 게이팅 + 추출(번역+썸네일 크롭) + 저장/조회/삭제."""
 import io, json, urllib.request, urllib.error, urllib.parse
 from _db import connect as _db_connect
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 
 Q = urllib.parse.quote
 BASE = "http://127.0.0.1:8971"
@@ -40,8 +40,16 @@ def upload(token, data, kind="receipt", fname="x.png", ctype="image/png"):
         return e.code, json.loads(e.read() or "{}")
 
 
-def png_bytes(color=(200, 200, 200), size=(300, 300)):
-    b = io.BytesIO(); Image.new("RGB", size, color).save(b, "PNG"); return b.getvalue()
+def fake_receipt_bytes():
+    """중국어 텍스트 + 사각형 '상품 사진' 1개가 있는 합성 주문내역 — 번역·좌표 추출 둘 다 실제로 검증."""
+    img = Image.new("RGB", (500, 220), (255, 255, 255))
+    d = ImageDraw.Draw(img)
+    font = ImageFont.truetype(r"C:\Windows\Fonts\msyh.ttc", 20)
+    d.rectangle([20, 20, 110, 110], fill=(200, 80, 80))
+    d.text((130, 30), "店铺: 优雅家居旗舰店", font=font, fill=(0, 0, 0))
+    d.text((130, 60), "无线蓝牙耳机 黑色", font=font, fill=(0, 0, 0))
+    d.text((130, 90), "数量: 2  单价: ¥99.90", font=font, fill=(0, 0, 0))
+    b = io.BytesIO(); img.save(b, "PNG"); return b.getvalue()
 
 
 def show(l, r): print(f"  {l}: {r[0]}  {json.dumps(r[1], ensure_ascii=False)[:150]}")
@@ -79,31 +87,40 @@ print("4) 권한 부여 후 빈 목록 조회 가능")
 r = call("GET", "/purchases", token=tok_u)
 show("empty list", r); assert r[0] == 200 and r[1]["items"] == [] and r[1]["total_krw"] == 0
 
-print("5) 영수증 이미지 업로드 + AI 추출 (실제 Gemini 호출, 텍스트 없는 이미지라 items=[] 예상)")
-up = upload(tok_u, png_bytes(), kind="receipt")
+print("5) 영수증 이미지 업로드 + AI 추출 (실제 Gemini 호출 — 한국어 번역 + 상품 사진 썸네일 크롭까지 검증)")
+up = upload(tok_u, fake_receipt_bytes(), kind="receipt")
 show("upload", up); assert up[0] == 200
 mid = up[1]["id"]
 r = call("POST", "/purchases/extract", {"media_id": mid}, token=tok_u)
-show("extract", r); assert r[0] == 200 and isinstance(r[1]["items"], list)
+show("extract", r); assert r[0] == 200 and isinstance(r[1]["items"], list) and len(r[1]["items"]) >= 1
+extracted = r[1]["items"][0]
+assert "블루투스" in extracted["product_name"] or "이어폰" in extracted["product_name"], extracted  # 한국어 번역 확인
+assert extracted["thumb_media_id"] and extracted["thumb_url"], extracted  # box_2d 크롭 성공 확인
+thumb_mid = extracted["thumb_media_id"]
 
-print("6) 수동 항목으로 저장 (위안화+원화 둘 다)")
+print("6) 추출된 항목(썸네일 포함) + 수동 항목(썸네일 없음) 함께 저장")
 r = call("POST", "/purchases", {
     "items": [
-        {"shop_name": "타오바오샵", "product_name": "무선 이어폰", "option_text": "블랙", "quantity": 2, "price_cny": 99.9, "price_krw": 19500},
+        {"shop_name": extracted["shop_name"], "product_name": extracted["product_name"],
+         "option_text": extracted["option_text"], "quantity": extracted["quantity"],
+         "price_cny": extracted["price_cny"], "price_krw": extracted["price_krw"],
+         "thumb_media_id": thumb_mid},
         {"shop_name": None, "product_name": "케이스", "quantity": 1, "price_cny": 15, "price_krw": None},
     ],
     "order_date": "2026-09-10", "source_media_id": mid,
 }, token=tok_u)
 show("save", r); assert r[0] == 200 and len(r[1]["ids"]) == 2
-ids = r[1]["ids"]
+ids = r[1]["ids"]  # ids[0] = 썸네일 있는 항목, ids[1] = 케이스
 
-print("7) 목록 + 합계 확인")
+print("7) 목록 + 합계 + 썸네일 노출 확인")
 r = call("GET", "/purchases", token=tok_u)
 show("list", r); assert r[0] == 200
 items = r[1]["items"]
 assert len(items) == 2, items
-assert r[1]["total_krw"] == 19500, r[1]
-assert round(r[1]["total_cny"], 1) == 114.9, r[1]
+by_id = {it["id"]: it for it in items}
+assert by_id[ids[0]]["thumb_url"], by_id[ids[0]]  # 썸네일 있는 항목
+assert by_id[ids[1]]["thumb_url"] is None, by_id[ids[1]]  # 수동 항목은 썸네일 없음
+assert round(r[1]["total_cny"], 1) == round(extracted["price_cny"] + 15, 1), r[1]
 
 print("8) 상품명 비어있으면 저장 거부")
 r = call("POST", "/purchases", {"items": [{"product_name": "  "}]}, token=tok_u)
@@ -115,11 +132,16 @@ assert r[0] == 200
 r = call("DELETE", f"/purchases/{ids[0]}", token=tok_u2)
 show("other erp user delete item", r); assert r[0] == 404
 
-print("10) 본인 삭제 성공")
+print("10) 본인 삭제 성공 + 썸네일 media GC 확인")
 r = call("DELETE", f"/purchases/{ids[0]}", token=tok_u)
 show("delete", r); assert r[0] == 200
 r = call("GET", "/purchases", token=tok_u)
 assert len(r[1]["items"]) == 1, r[1]
+c = _db_connect(); cur = c.cursor()
+cur.execute("select count(*) from healthweb.media where id = :i", i=thumb_mid)
+gone = cur.fetchone()[0] == 0
+c.close()
+assert gone, f"thumb media {thumb_mid} 가 GC 되지 않음"
 
 print("11) 오너가 권한 회수하면 다시 403")
 r = call("PATCH", f"/admin/users/{Q(U[1])}/erp-access", {"erp_access": False}, token=tok_ow)

@@ -58,7 +58,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | 텔레그램 알림 (옵트인) | `POST /push/telegram/code` → `{code,deep_link}` (10분 · 일회용) · `GET/DELETE /push/telegram` · `POST /internal/telegram/{link,unlink}` (`X-Internal-Key`, 봇→API 로컬 호출) |
 | 관리자 공지 | `GET/POST /admin/announcements` · `PATCH/DELETE /admin/announcements/:id` (오너 전용). `GET /notifications` 첫 페이지 응답에 `announcements`(활성 3개). `announcement`(title·body·link·starts_at·ends_at) 유효기간은 naive UTC, `_active_announcements()`. `parse_iso_utc()` 로 ISO(Z/offset/날짜만) → naive UTC |
 | 등급 (자기돌봄 습관) | `app_user.rank_level`(1~5)·`rank_score` — `/auth/me`·`GET /u/:handle`·`FEED_SQL`(글 작성자)에 노출. `_refresh_rank()` 를 `POST /weights`·`.../checkin` 성공 시 호출, 점수가 이전보다 클 때만 갱신(하락 없음). 등급 상승 시 `notification`(kind='rank', rank_level) + 텔레그램 |
-| ERP (구매 기록, 오너 지정 전용) | `PATCH /admin/users/:handle/erp-access`(`{erp_access}`, 오너 전용, handle=name) · `POST /purchases/extract`(`{media_id}` → Gemini 비전으로 상품·위안화 가격 추출, CNY→KRW 환율 자동 계산) · `POST /purchases`(`{items[],order_date?,source_media_id?}`) · `GET /purchases?cursor=` (`items`+`total_krw`+`total_cny`) · `DELETE /purchases/:id`. 전부 `require_erp()`(`app_user.erp_access`) 게이트 |
+| ERP (구매 기록, 오너 지정 전용) | `PATCH /admin/users/:handle/erp-access`(`{erp_access}`, 오너 전용, handle=name) · `POST /purchases/extract`(`{media_id}` → Gemini 비전으로 상품명(한국어 번역)·위안화 가격·상품 사진 위치(`box_2d`) 추출, CNY→KRW 환율 자동 계산, 사진은 서버가 원본에서 크롭해 `item_thumb` media 로 저장 후 `thumb_media_id`/`thumb_url` 반환) · `POST /purchases`(`{items[](thumb_media_id? 포함),order_date?,source_media_id?}`) · `GET /purchases?cursor=` (`items`+`total_krw`+`total_cny`, 각 item에 `thumb_url`) · `DELETE /purchases/:id`(원본·썸네일 media 모두 GC). 전부 `require_erp()`(`app_user.erp_access`) 게이트 |
 
 - bcrypt · PyJWT(HS256, 7일). 회원가입 폼은 비밀번호 확인 필드 포함(프론트 검증). `login_id`는 API 응답의 공개 컨텍스트(피드/프로필/댓글)에 절대 안 나감 — `name`만.
 - **P3a 리치 프로필**: `PATCH /auth/me` 에 `link`(URL 정규화·검증) · `location` · `pinned_post_id`(0이하 = 해제, 본인 글만). `GET /u/:handle` 에 `link`·`location`·`post_count`·`challenge_count`·`pinned`(고정 글, `posts`에서 제외)·`trend_series`(public 한정, 스파크라인용).
@@ -108,6 +108,10 @@ reflection→reflect, question→casual) 후 체크 제약 교체. 몸무게 공
 `sql/045_purchases.sql` (**적용됨** — healthweb 유저): `app_user` +`erp_access`(0/1, 기본 0, 오너가 개별 부여) ·
 `purchase_item`(login_id·shop_name·product_name·option_text·quantity·price_cny·price_krw·fx_rate·fx_at·order_date·source_media_id→media) ·
 `media.kind` 체크 제약에 `'receipt'` 추가(기존 제약 drop 후 재생성, 043과 동일 패턴).
+
+`sql/046_purchase_thumbs.sql` (**적용됨** — healthweb 유저): `purchase_item` +`thumb_media_id`(→media) · `media.kind` 체크 제약에
+`'item_thumb'` 추가. **주의**: `media.kind` 컬럼이 `varchar2(12)`라 `'purchase_thumb'`(14자)는 ORA-12899로 insert 실패 —
+`'item_thumb'`(10자)로 줄여서 사용. 새 kind 값 추가 시 항상 컬럼 길이부터 확인할 것.
 
 ## VM 배포 (memo-agent)
 

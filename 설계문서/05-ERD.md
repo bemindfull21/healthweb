@@ -1,6 +1,6 @@
 # ERD — `healthweb` 스키마
 
-Oracle Autonomous DB(SHINDB), `healthweb` 전용 유저로 접속. 마이그레이션 파일: `sql/010`~`sql/045` (순서대로 적용).
+Oracle Autonomous DB(SHINDB), `healthweb` 전용 유저로 접속. 마이그레이션 파일: `sql/010`~`sql/046` (순서대로 적용).
 `BLOCK`·`COMMENT`가 Oracle 예약어라 테이블명은 `user_block`·`post_comment`를 쓴다.
 
 ```mermaid
@@ -26,6 +26,7 @@ erDiagram
     APP_USER ||--o{ PURCHASE_ITEM : "구매 기록한다(erp_access 부여자만)"
 
     PURCHASE_ITEM }o--o| MEDIA : "영수증 원본(source_media_id)"
+    PURCHASE_ITEM }o--o| MEDIA : "AI 크롭 상품 사진(thumb_media_id)"
 
     WEIGHT_ENTRY ||--o| POST : "글로 공유될 수 있다"
     WEIGHT_ENTRY }o--o| MEDIA : "진행 사진(photo_media_id)"
@@ -115,7 +116,7 @@ erDiagram
     MEDIA {
         number id PK
         varchar2 login_id FK
-        varchar2 kind "avatar/progress/post/receipt"
+        varchar2 kind "avatar/progress/post/receipt/item_thumb"
         varchar2 path
         varchar2 thumb_path
         number width
@@ -135,6 +136,7 @@ erDiagram
         timestamp fx_at "nullable"
         varchar2 order_date "YYYY-MM-DD, nullable"
         number source_media_id FK "영수증 원본, nullable"
+        number thumb_media_id FK "AI가 크롭한 상품 사진, nullable"
         timestamp created_at
     }
     REPORT {
@@ -176,9 +178,11 @@ erDiagram
 | `043` | 등급 — `app_user`+`rank_score/rank_level`, `notification`+`rank_level`, kind 체크 제약에 `'rank'` 추가 |
 | `044` | 글 종류 재편 — `post.kind` 값 교체(brag/resolve/reflect/casual, 표시 라벨 자랑/도전/성찰/그냥), 기존 데이터 최선 추정 매핑 |
 | `045` | ERP 구매 기록 — `app_user`+`erp_access`, `purchase_item` 신설, `media.kind` 체크 제약에 `'receipt'` 추가 |
+| `046` | ERP 상품 사진 — `purchase_item`+`thumb_media_id`, `media.kind` 체크 제약에 `'item_thumb'` 추가 |
 
 ## 알려진 특이사항
 
 - `notification.actor`는 NOT NULL FK라서, "시스템이 보내는" 등급 알림도 `actor=수신자 자신`으로 저장한다(자기참조).
 - `challenge_checkin.check_date`는 UTC가 아니라 **사용자가 보낸 문자열 그대로**(`YYYY-MM-DD`) 저장 — 타임존 변환 없음.
 - `report.target_id`는 `post`/`comment`면 숫자 ID 문자열, `user`면 `login_id` — 컬럼 하나가 두 가지 의미를 가짐.
+- `media.kind`는 `varchar2(12)` — 새 kind 값을 추가할 때 12자를 넘기면 ORA-12899. `'purchase_thumb'`(14자)로 시도했다가 실패해 `'item_thumb'`(10자)로 줄임(`sql/046`).

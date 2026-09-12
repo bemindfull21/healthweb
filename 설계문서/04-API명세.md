@@ -117,10 +117,10 @@
 | 메서드 | 경로 | 인증 | 바디 | 설명 |
 |---|---|---|---|---|
 | PATCH | `/admin/users/:handle/erp-access` | ✓(오너 전용) | `erp_access: bool` | `handle`은 `name`(닉네임). ERP 접근 권한 부여/회수 |
-| POST | `/purchases/extract` | ✓(erp_access) | `media_id` | `kind='receipt'` 이미지를 Gemini 비전으로 분석 → `{items:[{shop_name,product_name,option_text,quantity,price_cny,price_krw,fx_rate}]}`. 상품 미검출 시 `items:[]`(정상). 10회/시간 제한 |
-| POST | `/purchases` | ✓(erp_access) | `items[], order_date?, source_media_id?` | 항목별 `product_name` 필수(빈 값은 건너뜀, 전부 빈 값이면 400). `{ids:[...]}` 반환 |
-| GET | `/purchases?cursor=&limit=` | ✓(erp_access) | — | 커서 페이지네이션(id desc) + 전체 합계 `total_krw`·`total_cny` |
-| DELETE | `/purchases/:id` | ✓(erp_access) | — | 본인 기록만(아니면 404), 원본 영수증 미디어 GC |
+| POST | `/purchases/extract` | ✓(erp_access) | `media_id` | `kind='receipt'` 이미지를 Gemini 비전으로 분석 → `{items:[{shop_name,product_name,option_text,quantity,price_cny,price_krw,fx_rate,thumb_media_id,thumb_url}]}`. shop_name·product_name·option_text 는 한국어로 번역됨. 상품 사진 위치(`box_2d`)를 함께 받아 서버가 원본에서 크롭해 `item_thumb` media 로 저장(찾지 못하면 `thumb_media_id:null`). 상품 미검출 시 `items:[]`(정상). 최대 20개 항목까지만 처리. 10회/시간 제한 |
+| POST | `/purchases` | ✓(erp_access) | `items[](thumb_media_id? 포함), order_date?, source_media_id?` | 항목별 `product_name` 필수(빈 값은 건너뜀, 전부 빈 값이면 400). `thumb_media_id` 는 본인 소유·`kind='item_thumb'` 검증 후 연결. `{ids:[...]}` 반환 |
+| GET | `/purchases?cursor=&limit=` | ✓(erp_access) | — | 커서 페이지네이션(id desc) + 전체 합계 `total_krw`·`total_cny`. 각 item 에 `thumb_url`(없으면 null) |
+| DELETE | `/purchases/:id` | ✓(erp_access) | — | 본인 기록만(아니면 404), 원본 영수증·상품 썸네일 미디어 모두 GC |
 
 ## 기타
 
