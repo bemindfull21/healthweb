@@ -545,8 +545,14 @@ img.avatar { object-fit: cover; display: block; }
 }
 
 .stock-sale-fields { margin-top: 6px; }
+.stock-save-actions { display: flex; gap: 8px; }
+.stock-save-actions button { flex: 1; }
 .sale-edit-fields { flex-shrink: 0; width: 140px; }
 .sale-edit-fields input { width: 100%; margin: 0; text-align: right; font-variant-numeric: tabular-nums; }
+.waste-badge {
+  font-size: .7rem; color: var(--error); border: 1px solid var(--error);
+  border-radius: 6px; padding: 1px 5px; margin-left: 4px; vertical-align: middle;
+}
 
 .profit-table { font-variant-numeric: tabular-nums; }
 .profit-row {

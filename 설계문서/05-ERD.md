@@ -1,6 +1,6 @@
 # ERD — `healthweb` 스키마
 
-Oracle Autonomous DB(SHINDB), `healthweb` 전용 유저로 접속. 마이그레이션 파일: `sql/010`~`sql/050` (순서대로 적용).
+Oracle Autonomous DB(SHINDB), `healthweb` 전용 유저로 접속. 마이그레이션 파일: `sql/010`~`sql/051` (순서대로 적용).
 `BLOCK`·`COMMENT`가 Oracle 예약어라 테이블명은 `user_block`·`post_comment`를 쓴다.
 
 ```mermaid
@@ -30,6 +30,7 @@ erDiagram
     PURCHASE_ITEM }o--o| MEDIA : "영수증 원본(source_media_id)"
     PURCHASE_ITEM }o--o| MEDIA : "AI 크롭 상품 사진(thumb_media_id)"
     PURCHASE_ITEM ||--o{ SALE_ITEM : "판매된다(purchase_item_id)"
+    SALE_ITEM }o--o| EXPENSE_ITEM : "폐기 시 자동 생성한 비용(expense_item_id, is_waste=1일 때만)"
 
     WEIGHT_ENTRY ||--o| POST : "글로 공유될 수 있다"
     WEIGHT_ENTRY }o--o| MEDIA : "진행 사진(photo_media_id)"
@@ -159,8 +160,10 @@ erDiagram
         number purchase_item_id FK
         varchar2 sale_date "YYYY-MM-DD, 필수"
         number sale_qty
-        number sale_price_krw "판매가(원화, 단가)"
-        number sale_amount_krw "판매금액 = sale_price_krw*sale_qty"
+        number sale_price_krw "판매가(원화, 단가). is_waste=1이면 0"
+        number sale_amount_krw "판매금액 = sale_price_krw*sale_qty. is_waste=1이면 0"
+        number is_waste "0/1, 기본 0 — 1이면 폐기(매출·구매원가 계산 제외)"
+        number expense_item_id FK "폐기 시 자동 생성된 비용, nullable"
         timestamp created_at
     }
     REPORT {
@@ -207,6 +210,7 @@ erDiagram
 | `048` | ERP 구매ID — `purchase_item`+`purchase_no`(YYYYMMDD-NNN, (login_id,purchase_no) UNIQUE)+`unit_price_krw`. 기존 1건 백필. `price_cny`/`price_krw`를 "단가×환율"에서 "단가×수량×환율(총액)"로 의미 수정 |
 | `049` | ERP 비용 — `expense_item` 신설(login_id·expense_date·item_name·amount_krw) |
 | `050` | ERP 재고/판매 — `sale_item` 신설(login_id·purchase_item_id·sale_date·sale_qty·sale_price_krw·sale_amount_krw). 남은 재고는 컬럼으로 안 두고 `purchase_item.quantity - sum(sale_item.sale_qty)`로 매번 계산 |
+| `051` | ERP 판매 삭제/재고 폐기 — `sale_item` +`is_waste`(0/1, 기본 0) +`expense_item_id`(→expense_item, nullable). 폐기 판매는 매출·구매원가 계산에서 빠지고 대신 `expense_item`에 "상품 폐기" 비용으로 자동 기록됨 |
 
 ## 알려진 특이사항
 

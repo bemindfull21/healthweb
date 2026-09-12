@@ -596,12 +596,13 @@ class ExpensePatchIn(BaseModel):
 class SaleItemIn(BaseModel):
     purchase_item_id: int
     sale_qty: int
-    sale_price_krw: float
+    sale_price_krw: float = 0
 
 
 class SaleSaveIn(BaseModel):
     items: list[SaleItemIn]
     sale_date: str
+    is_waste: bool = False
 
 
 class SalePatchIn(BaseModel):
@@ -2214,6 +2215,9 @@ def delete_purchase(pid: int, u: dict = Depends(current_user)) -> dict:
     )
     if row is None:
         raise HTTPException(404, "없는 기록입니다")
+    has_sale = q1("select 1 x from healthweb.sale_item where purchase_item_id = :i and rownum = 1", i=pid)
+    if has_sale:
+        raise HTTPException(400, "판매 이력이 있어 삭제할 수 없습니다")
     dml("delete from healthweb.purchase_item where id = :i", i=pid)
     _gc_media(row["source_media_id"])
     _gc_media(row["thumb_media_id"])
@@ -2323,7 +2327,8 @@ def save_sales(body: SaleSaveIn, u: dict = Depends(current_user)) -> dict:
     ids = []
     for it in body.items:
         row = q1(
-            "select quantity, received from healthweb.purchase_item where id = :pid and login_id = :l",
+            "select quantity, received, unit_price_krw from healthweb.purchase_item "
+            "where id = :pid and login_id = :l",
             pid=it.purchase_item_id, l=u["login_id"],
         )
         if row is None or not row["received"]:
@@ -2335,15 +2340,29 @@ def save_sales(body: SaleSaveIn, u: dict = Depends(current_user)) -> dict:
         remaining = row["quantity"] - sold["s"]
         if it.sale_qty <= 0 or it.sale_qty > remaining:
             raise HTTPException(400, "판매 수량이 재고 수량을 초과했습니다")
-        if it.sale_price_krw <= 0:
-            raise HTTPException(400, "판매가격을 입력해 주세요")
-        amount = round(it.sale_price_krw * it.sale_qty, 0)
+        if body.is_waste:
+            price, amount = 0.0, 0.0
+        else:
+            if it.sale_price_krw <= 0:
+                raise HTTPException(400, "판매가격을 입력해 주세요")
+            price = it.sale_price_krw
+            amount = round(price * it.sale_qty, 0)
         sid = insert_id(
             "insert into healthweb.sale_item "
-            "(login_id, purchase_item_id, sale_date, sale_qty, sale_price_krw, sale_amount_krw) "
-            "values (:l, :pid, :d, :q, :p, :a) returning id into :new_id",
-            l=u["login_id"], pid=it.purchase_item_id, d=sale_date, q=it.sale_qty, p=it.sale_price_krw, a=amount,
+            "(login_id, purchase_item_id, sale_date, sale_qty, sale_price_krw, sale_amount_krw, is_waste) "
+            "values (:l, :pid, :d, :q, :p, :a, :w) returning id into :new_id",
+            l=u["login_id"], pid=it.purchase_item_id, d=sale_date, q=it.sale_qty, p=price, a=amount,
+            w=1 if body.is_waste else 0,
         )
+        if body.is_waste:
+            unit_price = float(row["unit_price_krw"]) if row["unit_price_krw"] is not None else 0.0
+            waste_amount = round(unit_price * it.sale_qty, 0)
+            eid = insert_id(
+                "insert into healthweb.expense_item (login_id, expense_date, item_name, amount_krw) "
+                "values (:l, :d, '상품 폐기', :a) returning id into :new_id",
+                l=u["login_id"], d=sale_date, a=waste_amount,
+            )
+            dml("update healthweb.sale_item set expense_item_id = :e where id = :i", e=eid, i=sid)
         ids.append(sid)
     return {"ids": ids}
 
@@ -2361,7 +2380,7 @@ def list_sales(
         conds.append("s.sale_date <= :dt"); binds["dt"] = date_to
     where = " and ".join(conds)
     rows = qall(
-        f"select s.id, s.sale_date, s.sale_qty, s.sale_price_krw, s.sale_amount_krw, "
+        f"select s.id, s.sale_date, s.sale_qty, s.sale_price_krw, s.sale_amount_krw, s.is_waste, "
         f"p.purchase_no, p.product_name "
         f"from healthweb.sale_item s join healthweb.purchase_item p on p.id = s.purchase_item_id "
         f"where {where} order by s.sale_date desc, s.id desc",
@@ -2370,7 +2389,7 @@ def list_sales(
     items = [{
         "id": r["id"], "sale_date": r["sale_date"], "purchase_no": r["purchase_no"], "product_name": r["product_name"],
         "sale_qty": r["sale_qty"], "sale_price_krw": float(r["sale_price_krw"]),
-        "sale_amount_krw": float(r["sale_amount_krw"]),
+        "sale_amount_krw": float(r["sale_amount_krw"]), "is_waste": bool(r["is_waste"]),
     } for r in rows]
     total = q1(f"select sum(s.sale_amount_krw) t from healthweb.sale_item s where {where}", **binds)
     return {"items": items, "total_krw": float(total["t"]) if total and total["t"] is not None else 0}
@@ -2380,11 +2399,13 @@ def list_sales(
 def update_sale(sid: int, body: SalePatchIn, u: dict = Depends(current_user)) -> dict:
     require_erp(u)
     row = q1(
-        "select purchase_item_id from healthweb.sale_item where id = :i and login_id = :l",
+        "select purchase_item_id, is_waste from healthweb.sale_item where id = :i and login_id = :l",
         i=sid, l=u["login_id"],
     )
     if row is None:
         raise HTTPException(404, "없는 기록입니다")
+    if row["is_waste"]:
+        raise HTTPException(400, "폐기 처리 건은 수정할 수 없습니다. 삭제 후 다시 등록해 주세요")
     pid = row["purchase_item_id"]
     prow = q1("select quantity from healthweb.purchase_item where id = :pid", pid=pid)
     others = q1(
@@ -2401,6 +2422,21 @@ def update_sale(sid: int, body: SalePatchIn, u: dict = Depends(current_user)) ->
         "update healthweb.sale_item set sale_qty = :q, sale_price_krw = :p, sale_amount_krw = :a where id = :i",
         q=body.sale_qty, p=body.sale_price_krw, a=amount, i=sid,
     )
+    return {"ok": True}
+
+
+@app.delete("/sales/{sid}")
+def delete_sale(sid: int, u: dict = Depends(current_user)) -> dict:
+    require_erp(u)
+    row = q1(
+        "select expense_item_id from healthweb.sale_item where id = :i and login_id = :l",
+        i=sid, l=u["login_id"],
+    )
+    if row is None:
+        raise HTTPException(404, "없는 기록입니다")
+    dml("delete from healthweb.sale_item where id = :i", i=sid)
+    if row["expense_item_id"]:
+        dml("delete from healthweb.expense_item where id = :i", i=row["expense_item_id"])
     return {"ok": True}
 
 
@@ -2439,7 +2475,7 @@ def get_profit(u: dict = Depends(current_user), month_from: str = "", month_to: 
         "select substr(s.sale_date, 1, 7) ym, sum(s.sale_amount_krw) revenue, "
         "sum(s.sale_qty * nvl(p.unit_price_krw, 0)) cogs "
         "from healthweb.sale_item s join healthweb.purchase_item p on p.id = s.purchase_item_id "
-        "where s.login_id = :l and substr(s.sale_date, 1, 7) between :mf and :mt "
+        "where s.login_id = :l and s.is_waste = 0 and substr(s.sale_date, 1, 7) between :mf and :mt "
         "group by substr(s.sale_date, 1, 7)",
         l=u["login_id"], mf=mf, mt=mt,
     )

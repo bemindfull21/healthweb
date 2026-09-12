@@ -1371,16 +1371,17 @@ function ErpStockView() {
 
   const setRow = (id, patch) => setSel((s) => ({ ...s, [id]: { ...(s[id] || {}), ...patch } }));
 
-  const save = async () => {
+  const save = async (isWaste) => {
     const chosen = (items || []).filter((it) => sel[it.purchase_item_id]?.checked);
-    if (!chosen.length) return toast("판매할 상품을 선택해 주세요", "err");
-    if (!saleDate) return toast("판매일자를 입력해 주세요", "err");
+    if (!chosen.length) return toast("상품을 선택해 주세요", "err");
+    if (!saleDate) return toast("일자를 입력해 주세요", "err");
     setSaving(true);
     try {
       await api("/sales", {
         method: "POST",
         body: {
           sale_date: saleDate,
+          is_waste: isWaste,
           items: chosen.map((it) => ({
             purchase_item_id: it.purchase_item_id,
             sale_qty: Number(sel[it.purchase_item_id].qty ?? 1),
@@ -1388,7 +1389,7 @@ function ErpStockView() {
           })),
         },
       });
-      toast("판매를 저장했습니다");
+      toast(isWaste ? "폐기 처리했습니다" : "판매를 저장했습니다");
       setSel({});
       load();
     } catch (e) { toast(e.detail, "err"); }
@@ -1424,7 +1425,10 @@ function ErpStockView() {
               <div class="erp-item-price">₩${Math.round(it.remaining_amount_krw || 0).toLocaleString()}</div>
             </div>`;
           })}
-    ${items && items.length > 0 && html`<button disabled=${saving} onClick=${save}>판매 저장</button>`}
+    ${items && items.length > 0 && html`<div class="stock-save-actions">
+      <button disabled=${saving} onClick=${() => save(false)}>판매 저장</button>
+      <button disabled=${saving} class="ghost" onClick=${() => save(true)}>폐기 저장</button>
+    </div>`}
   </div>`;
 }
 
@@ -1468,6 +1472,12 @@ function ErpSalesView() {
     }
   };
 
+  const del = async (id) => {
+    if (!confirm("이 판매 기록을 삭제할까요? (재고가 다시 늘어납니다)")) return;
+    try { await api(`/sales/${id}`, { method: "DELETE" }); load(); toast("삭제했습니다"); }
+    catch (e) { toast(e.detail, "err"); }
+  };
+
   return html`<div>
     <div class="panel erp-filter">
       <div class="erp-filter-row">
@@ -1484,14 +1494,17 @@ function ErpSalesView() {
         ? html`<div class="empty">판매 내역이 없어요.</div>`
         : items.map((x) => html`<div class="erp-item" key=${x.id}>
             <div class="erp-item-main">
-              <b>${x.product_name}</b>
+              <b>${x.product_name}</b>${x.is_waste && html` <span class="waste-badge">폐기</span>`}
               <div class="muted sm">${x.purchase_no} · ${x.sale_date}</div>
             </div>
-            <div class="erp-row-fields sale-edit-fields">
-              <input type="number" value=${x.sale_qty} onBlur=${(e) => upd(x, { sale_qty: e.target.value })} />
-              <input type="number" value=${x.sale_price_krw} onBlur=${(e) => upd(x, { sale_price_krw: e.target.value })} />
-            </div>
+            ${x.is_waste
+              ? html`<div class="muted sm">${x.sale_qty}개</div>`
+              : html`<div class="erp-row-fields sale-edit-fields">
+                  <input type="number" value=${x.sale_qty} onBlur=${(e) => upd(x, { sale_qty: e.target.value })} />
+                  <input type="number" value=${x.sale_price_krw} onBlur=${(e) => upd(x, { sale_price_krw: e.target.value })} />
+                </div>`}
             <div class="erp-item-price">₩${Math.round(x.sale_amount_krw).toLocaleString()}</div>
+            <button class="row-del" onClick=${() => del(x.id)}>✕</button>
           </div>`)}
   </div>`;
 }
