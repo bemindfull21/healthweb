@@ -1152,6 +1152,7 @@ function ErpPurchaseView() {
   const save = async () => {
     const items = (draft || []).filter((r) => (r.product_name || "").trim());
     if (!items.length) return toast("저장할 상품이 없어요", "err");
+    if (!orderDate) return toast("구매일자를 입력해 주세요", "err");
     setSaving(true);
     try {
       await api("/purchases", {
@@ -1166,7 +1167,7 @@ function ErpPurchaseView() {
             price_krw: r.price_krw === "" ? null : Number(r.price_krw),
             thumb_media_id: r.thumb_media_id || null,
           })),
-          order_date: orderDate || null,
+          order_date: orderDate,
           source_media_id: receipt ? receipt.id : null,
         },
       });
@@ -1191,8 +1192,8 @@ function ErpPurchaseView() {
     </div>
 
     ${draft && html`<div class="panel">
-      <label>주문일 (선택)
-        <input type="date" value=${orderDate} onInput=${(e) => setOrderDate(e.target.value)} /></label>
+      <label>주문일 (필수)
+        <input type="date" required value=${orderDate} onInput=${(e) => setOrderDate(e.target.value)} /></label>
       ${draft.map((row, i) => html`<div class="erp-row" key=${i}>
         ${row.thumb_url
           ? html`<img class="erp-thumb" src=${row.thumb_url} alt="" />`
@@ -1208,7 +1209,7 @@ function ErpPurchaseView() {
         <button type="button" class="row-del" onClick=${() => rmRow(i)}>✕</button>
       </div>`)}
       <button type="button" class="ghost" onClick=${addRow}>+ 줄 추가</button>
-      <button disabled=${saving} onClick=${save}>저장</button>
+      <button disabled=${saving || !orderDate} onClick=${save}>저장</button>
     </div>`}
 
     <div class="panel erp-filter">
@@ -1235,9 +1236,9 @@ function ErpPurchaseView() {
             <div class="erp-item-main">
               <b>${p.product_name}</b>${p.option_text && html` <span class="muted sm">${p.option_text}</span>`}
               <div class="muted sm">${p.shop_name || ""}${p.quantity > 1 ? ` × ${p.quantity}` : ""}</div>
-              ${p.order_date && html`<div class="muted sm">${p.order_date}</div>`}
             </div>
             <div class="erp-item-price">
+              ${p.order_date && html`<div class="muted sm">${p.order_date}</div>`}
               ${p.price_krw != null && html`<div>₩${Math.round(p.price_krw).toLocaleString()}</div>`}
               ${p.price_cny != null && html`<div class="muted sm">¥${p.price_cny}</div>`}
             </div>

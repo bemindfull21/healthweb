@@ -143,8 +143,12 @@ r = call("GET", "/purchases?unreceived_only=true&date_from=2026-09-11&date_to=20
 show("unreceived ignores range", r); assert r[0] == 200 and ids[0] in [it["id"] for it in r[1]["items"]]
 
 print("8) 상품명 비어있으면 저장 거부")
-r = call("POST", "/purchases", {"items": [{"product_name": "  "}]}, token=tok_u)
+r = call("POST", "/purchases", {"items": [{"product_name": "  "}], "order_date": "2026-09-10"}, token=tok_u)
 show("empty product", r); assert r[0] == 400
+
+print("8b) 구매일자 비어있으면 저장 거부 (필수 입력)")
+r = call("POST", "/purchases", {"items": [{"product_name": "정상 상품"}], "order_date": ""}, token=tok_u)
+show("empty order_date", r); assert r[0] == 400
 
 print("9) ERP 권한이 있어도 남의 구매 기록은 못 지움 (자기 것만 GET/DELETE 대상)")
 r = call("PATCH", f"/admin/users/{Q(U2[1])}/erp-access", {"erp_access": True}, token=tok_ow)

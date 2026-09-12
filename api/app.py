@@ -575,7 +575,7 @@ class PurchaseItemIn(BaseModel):
 
 class PurchaseSaveIn(BaseModel):
     items: list[PurchaseItemIn]
-    order_date: Optional[str] = None
+    order_date: str
     source_media_id: Optional[int] = None
 
 
@@ -2073,6 +2073,9 @@ def save_purchases(body: PurchaseSaveIn, u: dict = Depends(current_user)) -> dic
     require_erp(u)
     if not body.items:
         raise HTTPException(400, "저장할 항목이 없습니다")
+    order_date = body.order_date.strip()
+    if not order_date:
+        raise HTTPException(400, "구매일자를 입력해 주세요")
     smid = _own_media(body.source_media_id, u["login_id"], "receipt")
     ids = []
     for it in body.items:
@@ -2086,7 +2089,7 @@ def save_purchases(body: PurchaseSaveIn, u: dict = Depends(current_user)) -> dic
             "values (:l, :s, :p, :o, :q, :cny, :krw, :rate, :fa, :od, :m, :t) returning id into :new_id",
             l=u["login_id"], s=(it.shop_name or None), p=name, o=(it.option_text or None),
             q=max(1, it.quantity or 1), cny=it.price_cny, krw=it.price_krw, rate=it.fx_rate,
-            fa=utcnow() if it.fx_rate else None, od=(body.order_date or None), m=smid, t=tmid,
+            fa=utcnow() if it.fx_rate else None, od=order_date, m=smid, t=tmid,
         )
         ids.append(pid)
     if not ids:

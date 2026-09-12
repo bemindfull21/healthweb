@@ -134,7 +134,7 @@ erDiagram
         number price_krw "nullable"
         number fx_rate "추출 시점 CNY→KRW 환율, nullable"
         timestamp fx_at "nullable"
-        varchar2 order_date "YYYY-MM-DD, nullable"
+        varchar2 order_date "YYYY-MM-DD, 필수(API에서 강제, 컬럼 자체는 nullable — 과거 데이터 호환)"
         number source_media_id FK "영수증 원본, nullable"
         number thumb_media_id FK "AI가 크롭한 상품 사진, nullable"
         number received "0/1, 기본 0 — 입고 체크"
