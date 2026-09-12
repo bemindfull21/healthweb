@@ -1909,10 +1909,11 @@ EXTRACT_PROMPT = """이 이미지는 쇼핑몰(타오바오 등) 주문 내역 �
 아래 JSON 형식으로만 답하세요. 다른 설명은 절대 붙이지 마세요.
 
 {"items": [
-  {"shop_name": "상점 이름 또는 null", "product_name": "상품명", "option_text": "색상·사이즈 등 옵션 또는 null",
+  {"shop_name": "상점 이름(한국어로 번역) 또는 null", "product_name": "상품명(한국어로 번역)", "option_text": "색상·사이즈 등 옵션(한국어로 번역) 또는 null",
    "quantity": 수량(숫자), "price_cny": 단가(위안화, 숫자만, 통화기호 제외)}
 ]}
 
+원문이 중국어 등 외국어여도 shop_name·product_name·option_text 는 반드시 자연스러운 한국어로 번역해서 넣으세요(고유명사·브랜드명은 음차 가능).
 상품을 하나도 못 찾으면 {"items": []} 로 답하세요. price_cny 는 반드시 숫자(예: 19.9)로, 못 읽으면 null."""
 
 
