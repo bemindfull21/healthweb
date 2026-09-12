@@ -2045,11 +2045,16 @@ async def extract_purchase(body: PurchaseExtractIn, u: dict = Depends(current_us
     for it in raw_items[:MAX_EXTRACT_ITEMS]:
         if not isinstance(it, dict):
             continue
-        cny = it.get("price_cny")
+        unit_cny = it.get("price_cny")  # Gemini가 읽어주는 값은 화면에 표시된 단가(위안화)
         try:
-            cny = float(cny) if cny is not None else None
+            unit_cny = float(unit_cny) if unit_cny is not None else None
         except (TypeError, ValueError):
-            cny = None
+            unit_cny = None
+        qty = _parse_qty(it.get("quantity"))
+        # 금액(위안화/원화)은 단가 × 수량의 총액, 단가(원화)는 그 총액을 다시 수량으로 나눈 값 — 구매기능 요건 1
+        amount_cny = round(unit_cny * qty, 2) if unit_cny is not None else None
+        amount_krw = round(amount_cny * rate, 0) if (amount_cny is not None and rate) else None
+        unit_krw = round(amount_krw / qty, 0) if amount_krw is not None else None
         thumb = None
         box = it.get("box_2d")
         if isinstance(box, list) and len(box) == 4:
@@ -2058,9 +2063,10 @@ async def extract_purchase(body: PurchaseExtractIn, u: dict = Depends(current_us
             "shop_name": (str(it.get("shop_name")).strip() if it.get("shop_name") else None),
             "product_name": (str(it.get("product_name") or "")).strip()[:300] or "상품",
             "option_text": (str(it.get("option_text")).strip() if it.get("option_text") else None),
-            "quantity": _parse_qty(it.get("quantity")),
-            "price_cny": cny,
-            "price_krw": round(cny * rate, 0) if (cny is not None and rate) else None,
+            "quantity": qty,
+            "price_cny": amount_cny,
+            "price_krw": amount_krw,
+            "unit_price_krw": unit_krw,
             "fx_rate": rate,
             "thumb_media_id": thumb["id"] if thumb else None,
             "thumb_url": _media_url(thumb["path"])["url"] if thumb else None,
@@ -2077,21 +2083,31 @@ def save_purchases(body: PurchaseSaveIn, u: dict = Depends(current_user)) -> dic
     if not order_date:
         raise HTTPException(400, "구매일자를 입력해 주세요")
     smid = _own_media(body.source_media_id, u["login_id"], "receipt")
+    row = q1(
+        "select count(*) c from healthweb.purchase_item where login_id = :l and order_date = :od",
+        l=u["login_id"], od=order_date,
+    )
+    seq = (row["c"] if row else 0) + 1
+    date_part = order_date.replace("-", "")
     ids = []
     for it in body.items:
         name = it.product_name.strip()[:300]
         if not name:
             continue
         tmid = _own_media(it.thumb_media_id, u["login_id"], "item_thumb")
+        qty = max(1, it.quantity or 1)
+        unit_krw = round(it.price_krw / qty, 0) if it.price_krw is not None else None
+        purchase_no = f"{date_part}-{seq:03d}"
         pid = insert_id(
             "insert into healthweb.purchase_item "
-            "(login_id, shop_name, product_name, option_text, quantity, price_cny, price_krw, fx_rate, fx_at, order_date, source_media_id, thumb_media_id) "
-            "values (:l, :s, :p, :o, :q, :cny, :krw, :rate, :fa, :od, :m, :t) returning id into :new_id",
-            l=u["login_id"], s=(it.shop_name or None), p=name, o=(it.option_text or None),
-            q=max(1, it.quantity or 1), cny=it.price_cny, krw=it.price_krw, rate=it.fx_rate,
+            "(login_id, purchase_no, shop_name, product_name, option_text, quantity, price_cny, price_krw, unit_price_krw, fx_rate, fx_at, order_date, source_media_id, thumb_media_id) "
+            "values (:l, :no, :s, :p, :o, :q, :cny, :krw, :ukrw, :rate, :fa, :od, :m, :t) returning id into :new_id",
+            l=u["login_id"], no=purchase_no, s=(it.shop_name or None), p=name, o=(it.option_text or None),
+            q=qty, cny=it.price_cny, krw=it.price_krw, ukrw=unit_krw, rate=it.fx_rate,
             fa=utcnow() if it.fx_rate else None, od=order_date, m=smid, t=tmid,
         )
         ids.append(pid)
+        seq += 1
     if not ids:
         raise HTTPException(400, "저장할 항목이 없습니다")
     return {"ids": ids}
@@ -2124,17 +2140,18 @@ def list_purchases(
         page_binds["cur"] = cursor
 
     rows = qall(
-        "select p.id, p.shop_name, p.product_name, p.option_text, p.quantity, p.price_cny, p.price_krw, "
-        "p.fx_rate, p.order_date, p.source_media_id, p.received, p.created_at, m.path thumb_path "
+        "select p.id, p.purchase_no, p.shop_name, p.product_name, p.option_text, p.quantity, p.price_cny, p.price_krw, "
+        "p.unit_price_krw, p.fx_rate, p.order_date, p.source_media_id, p.received, p.created_at, m.path thumb_path "
         "from healthweb.purchase_item p left join healthweb.media m on m.id = p.thumb_media_id "
         f"where {page_where} order by p.id desc fetch first :lim rows only",
         **page_binds,
     )
     items = [{
-        "id": r["id"], "shop_name": r["shop_name"], "product_name": r["product_name"],
+        "id": r["id"], "purchase_no": r["purchase_no"], "shop_name": r["shop_name"], "product_name": r["product_name"],
         "option_text": r["option_text"], "quantity": r["quantity"],
         "price_cny": float(r["price_cny"]) if r["price_cny"] is not None else None,
         "price_krw": float(r["price_krw"]) if r["price_krw"] is not None else None,
+        "unit_price_krw": float(r["unit_price_krw"]) if r["unit_price_krw"] is not None else None,
         "order_date": r["order_date"], "received": bool(r["received"]),
         "created_at": iso_z(r["created_at"]),
         "thumb_url": _media_url(r["thumb_path"])["url"] if r["thumb_path"] else None,

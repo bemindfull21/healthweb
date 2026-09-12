@@ -36,7 +36,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   폰트 없이 폴리라인으로 M 그림)로 생성 — 색·모양 바꾸면 `api/venv/Scripts/python.exe scripts/make_icons.py` 재실행.
   `manifest.json`(`display:standalone`) + 4개 HTML 전부에 `apple-touch-icon`·`manifest`·`theme-color` 링크.
 - **캐시버스터**: `app.js`·`style.css`·`config.js`·`landing.js`도 아이콘과 동일하게 참조하는 HTML(`app.html`·`index.html`·`challenge.html`·
-  `about.html`·`install-guide.html`)에서 `?v=N`로 부른다(2026-09-12 도입, 현재 `v=1`). Fastly CDN이 `max-age=600`이라 버전을 안 올리면
+  `about.html`·`install-guide.html`)에서 `?v=N`로 부른다(2026-09-12 도입, 파일별로 따로 버전 관리 — 현재 `app.js`/`style.css`는 `v=2`,
+  `config.js`/`landing.js`는 `v=1`). Fastly CDN이 `max-age=600`이라 버전을 안 올리면
   배포해도 사용자는 최대 10분 넘게 옛 코드를 봄 — **네 파일 중 하나라도 고치면 참조하는 모든 HTML의 그 파일 `?v=`를 함께 올릴 것.**
   "고쳤는데 반영이 안 됐다"는 신고가 오면 `curl -s https://bemindfull21.github.io/healthweb/app.js | grep <문자열>`로 배포된 코드부터 확인.
 - 로컬 테스트: `app.js`의 `const API` + `config.js`의 `window.HW.API` 를 `http://127.0.0.1:8971`로 `sed` (테스트 후 `git checkout config.js` + 역치환). 정적은 `python -m http.server 8080`.
@@ -120,6 +121,12 @@ reflection→reflect, question→casual) 후 체크 제약 교체. 몸무게 공
 `sql/047_purchase_received.sql` (**적용됨** — healthweb 유저): `purchase_item` +`received`(0/1, 기본 0) + 인덱스(login_id, received).
 입고 체크 여부. `GET /purchases`의 `unreceived_only=true` 필터가 이 컬럼 기준.
 
+`sql/048_purchase_no.sql` (**적용됨** — healthweb 유저): `purchase_item` +`purchase_no`(구매ID, `YYYYMMDD-NNN`,
+`(login_id,purchase_no)` UNIQUE, not null — 기존 1건 백필함) +`unit_price_krw`(단가원화). **의미 수정**: `price_cny`/`price_krw`가
+예전엔 "단가×환율"만 넣어 수량이 반영 안 된 값이었는데(실질 버그), 이번에 "단가×수량×환율" 총액으로 바로잡음 — `unit_price_krw`는
+그 총액을 다시 수량으로 나눈 값(`round(price_krw/quantity)`). 구매ID는 `POST /purchases` 저장 시 `login_id`+`order_date` 안에서
+저장 순서대로 채번(동시 저장 시 드물게 경합 가능 — 개인용 툴이라 감수).
+
 ## VM 배포 (memo-agent)
 
 - `/opt/health-web-api/` : `healthweb-api.service`(uvicorn :8000) + `caddy.service`(`healthweb21.duckdns.org`).
@@ -164,11 +171,12 @@ CSS: `--rank-1~5`/`--rank-N-soft` 토큰(라이트/다크) + `.rank-badge`, 다�
 `ErpPurchaseView` = 영수증 업로드(`ImageUpload kind="receipt"`) → `/purchases/extract` 호출 → 추출 결과 편집 가능한 표
 (사진 썸네일·상점·상품명·옵션·수량·¥·₩) → **주문일 입력(필수, 미입력 시 저장 버튼 비활성 + 서버도 400)** → 저장 → 조회 필터
 (시작일·종료일, 기본값 최근 7일 — 프론트가 로컬 타임존 기준으로 계산해 채움 · "미입고만 보기" 체크 시 기간 무시하고 `received=0`인
-항목 전체) → 누적 목록(₩/¥ 합계는 현재 필터 기준, 각 항목에 구매일자(₩ 금액 바로 위에 표시)·입고 체크박스(`PATCH /purchases/:id`)
-·개별 삭제). 영수증 원본은 `media` 테이블 재사용(`kind='receipt'`).
+항목 전체) → 누적 목록(₩/¥ 합계는 현재 필터 기준, 각 항목에 **구매ID**(₩ 금액 바로 위에 표시, 주문일자 대신)·입고 체크박스
+(`PATCH /purchases/:id`)·개별 삭제). 영수증 원본은 `media` 테이블 재사용(`kind='receipt'`).
 `_extract_purchase_items()` 는 `run_in_threadpool` 로 동기 Gemini 호출 격리, `response_mime_type="application/json"` 로 JSON 강제.
 텍스트 없는 이미지는 `{"items": []}` 응답 — 추출 실패가 아니라 정상 케이스로 처리. 수량은 `_parse_qty()`가 정수/실수/"2개"처럼
 단위 붙은 문자열까지 최대한 살려서 파싱(Gemini가 순수 정수가 아닌 값을 줄 때가 있어 문자열 `isdigit()` 검사만으로는 놓쳤었음).
+`price_cny`/`price_krw`는 총액(단가×수량×환율), `unit_price_krw`(단가원화)는 그 총액/수량 — `sql/048_purchase_no.sql` 참고.
 
 ## 미완 (Phase 3c+)
 

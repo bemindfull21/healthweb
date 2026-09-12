@@ -98,6 +98,11 @@ assert "블루투스" in extracted["product_name"] or "이어폰" in extracted["
 assert extracted["quantity"] == 2, extracted  # "数量: 2" 수량 추출 확인
 assert extracted["thumb_media_id"] and extracted["thumb_url"], extracted  # box_2d 크롭 성공 확인
 thumb_mid = extracted["thumb_media_id"]
+# 화면엔 단가(¥99.90)만 보이는데 금액(위안화/원화)은 수량(2) 을 곱한 총액이어야 함 — 예전엔 단가만 넣던 버그
+assert abs(extracted["price_cny"] - 99.9 * 2) < 0.01, extracted
+assert extracted["price_krw"] == round(extracted["price_cny"] * extracted["fx_rate"], 0), extracted
+# 단가(원화) = 금액(원화) / 수량, 반올림
+assert extracted["unit_price_krw"] == round(extracted["price_krw"] / extracted["quantity"], 0), extracted
 
 print("6) 추출된 항목(썸네일 포함) + 수동 항목(썸네일 없음) 함께 저장")
 r = call("POST", "/purchases", {
@@ -122,6 +127,10 @@ by_id = {it["id"]: it for it in items}
 assert by_id[ids[0]]["thumb_url"], by_id[ids[0]]  # 썸네일 있는 항목
 assert by_id[ids[1]]["thumb_url"] is None, by_id[ids[1]]  # 수동 항목은 썸네일 없음
 assert round(r[1]["total_cny"], 1) == round(extracted["price_cny"] + 15, 1), r[1]
+# 구매ID = 주문일자-일련번호(3자리), 같은 주문일자 안에서 저장 순서대로 채번
+assert by_id[ids[0]]["purchase_no"].startswith("20260910-"), by_id[ids[0]]
+assert by_id[ids[1]]["purchase_no"] == by_id[ids[0]]["purchase_no"][:9] + str(int(by_id[ids[0]]["purchase_no"][9:]) + 1).zfill(3), by_id
+assert by_id[ids[1]]["unit_price_krw"] is None, by_id[ids[1]]  # price_krw 없이 저장한 항목은 단가도 None
 
 print("7b) 입고 체크 + 미입고만 조회")
 assert by_id[ids[0]]["received"] is False and by_id[ids[1]]["received"] is False, items  # 기본값 미입고

@@ -522,6 +522,7 @@ img.avatar { object-fit: cover; display: block; }
   margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1px solid var(--border);
 }
 .erp-row-fields { flex: 1; min-width: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.erp-unit-hint { grid-column: 1 / -1; }
 .erp-row input { margin: 0; }
 .erp-thumb {
   width: 52px; height: 52px; border-radius: 8px; object-fit: cover;

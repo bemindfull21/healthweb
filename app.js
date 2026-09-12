@@ -1194,7 +1194,11 @@ function ErpPurchaseView() {
     ${draft && html`<div class="panel">
       <label>주문일 (필수)
         <input type="date" required value=${orderDate} onInput=${(e) => setOrderDate(e.target.value)} /></label>
-      ${draft.map((row, i) => html`<div class="erp-row" key=${i}>
+      ${draft.map((row, i) => {
+        const qtyNum = Number(row.quantity) || 1;
+        const krwNum = row.price_krw === "" ? null : Number(row.price_krw);
+        const unitKrw = krwNum != null && qtyNum > 0 ? Math.round(krwNum / qtyNum) : null;
+        return html`<div class="erp-row" key=${i}>
         ${row.thumb_url
           ? html`<img class="erp-thumb" src=${row.thumb_url} alt="" />`
           : html`<div class="erp-thumb erp-thumb-empty"></div>`}
@@ -1203,11 +1207,13 @@ function ErpPurchaseView() {
           <input placeholder="상품명" value=${row.product_name} onInput=${(e) => updRow(i, "product_name", e.target.value)} />
           <input placeholder="옵션" value=${row.option_text} onInput=${(e) => updRow(i, "option_text", e.target.value)} />
           <input type="number" placeholder="수량" value=${row.quantity} onInput=${(e) => updRow(i, "quantity", e.target.value)} />
-          <input type="number" placeholder="¥" value=${row.price_cny} onInput=${(e) => updRow(i, "price_cny", e.target.value)} />
-          <input type="number" placeholder="₩" value=${row.price_krw} onInput=${(e) => updRow(i, "price_krw", e.target.value)} />
+          <input type="number" placeholder="¥ 금액(총액)" value=${row.price_cny} onInput=${(e) => updRow(i, "price_cny", e.target.value)} />
+          <input type="number" placeholder="₩ 금액(총액)" value=${row.price_krw} onInput=${(e) => updRow(i, "price_krw", e.target.value)} />
+          ${unitKrw != null && html`<span class="muted sm erp-unit-hint">단가 ₩${unitKrw.toLocaleString()}</span>`}
         </div>
         <button type="button" class="row-del" onClick=${() => rmRow(i)}>✕</button>
-      </div>`)}
+      </div>`;
+      })}
       <button type="button" class="ghost" onClick=${addRow}>+ 줄 추가</button>
       <button disabled=${saving || !orderDate} onClick=${save}>저장</button>
     </div>`}
@@ -1235,10 +1241,10 @@ function ErpPurchaseView() {
             ${p.thumb_url && html`<img class="erp-thumb" src=${p.thumb_url} alt="" />`}
             <div class="erp-item-main">
               <b>${p.product_name}</b>${p.option_text && html` <span class="muted sm">${p.option_text}</span>`}
-              <div class="muted sm">${p.shop_name || ""}${p.quantity > 1 ? ` × ${p.quantity}` : ""}</div>
+              <div class="muted sm">${p.shop_name || ""}${p.quantity > 1 ? ` × ${p.quantity}` : ""}${p.unit_price_krw != null && p.quantity > 1 ? ` (개당 ₩${Math.round(p.unit_price_krw).toLocaleString()})` : ""}</div>
             </div>
             <div class="erp-item-price">
-              ${p.order_date && html`<div class="muted sm">${p.order_date}</div>`}
+              ${p.purchase_no && html`<div class="muted sm">${p.purchase_no}</div>`}
               ${p.price_krw != null && html`<div>₩${Math.round(p.price_krw).toLocaleString()}</div>`}
               ${p.price_cny != null && html`<div class="muted sm">¥${p.price_cny}</div>`}
             </div>

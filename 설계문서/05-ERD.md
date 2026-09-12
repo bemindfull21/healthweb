@@ -126,12 +126,14 @@ erDiagram
     PURCHASE_ITEM {
         number id PK
         varchar2 login_id FK
+        varchar2 purchase_no "구매ID, YYYYMMDD-NNN. (login_id,purchase_no) UNIQUE, not null"
         varchar2 shop_name "nullable"
         varchar2 product_name
         varchar2 option_text "nullable"
         number quantity "기본 1"
-        number price_cny "nullable"
-        number price_krw "nullable"
+        number price_cny "금액(위안화 총액) = 단가×수량, nullable"
+        number price_krw "금액(원화 총액) = price_cny×fx_rate, nullable"
+        number unit_price_krw "단가(원화) = round(price_krw/quantity), nullable"
         number fx_rate "추출 시점 CNY→KRW 환율, nullable"
         timestamp fx_at "nullable"
         varchar2 order_date "YYYY-MM-DD, 필수(API에서 강제, 컬럼 자체는 nullable — 과거 데이터 호환)"
@@ -181,6 +183,7 @@ erDiagram
 | `045` | ERP 구매 기록 — `app_user`+`erp_access`, `purchase_item` 신설, `media.kind` 체크 제약에 `'receipt'` 추가 |
 | `046` | ERP 상품 사진 — `purchase_item`+`thumb_media_id`, `media.kind` 체크 제약에 `'item_thumb'` 추가 |
 | `047` | ERP 입고 체크 — `purchase_item`+`received`(0/1, 기본 0) + 인덱스(login_id, received) |
+| `048` | ERP 구매ID — `purchase_item`+`purchase_no`(YYYYMMDD-NNN, (login_id,purchase_no) UNIQUE)+`unit_price_krw`. 기존 1건 백필. `price_cny`/`price_krw`를 "단가×환율"에서 "단가×수량×환율(총액)"로 의미 수정 |
 
 ## 알려진 특이사항
 
