@@ -579,6 +579,10 @@ class PurchaseSaveIn(BaseModel):
     source_media_id: Optional[int] = None
 
 
+class PurchasePatchIn(BaseModel):
+    received: bool
+
+
 # ---------- 헬스체크 ----------
 
 @app.get("/healthz")
@@ -1918,6 +1922,8 @@ EXTRACT_PROMPT = """이 이미지는 쇼핑몰(타오바오 등) 주문 내역 �
 ]}
 
 원문이 중국어 등 외국어여도 shop_name·product_name·option_text 는 반드시 자연스러운 한국어로 번역해서 넣으세요(고유명사·브랜드명은 음차 가능).
+quantity 는 화면에 실제로 표시된 구매 수량입니다 — "수량: 2", "x2", "×3", "2개", "2件" 등 어떤 표기든 찾아서 숫자만 반환하세요.
+표시가 전혀 안 보이면 1로 하세요. quantity 를 문자열이 아닌 순수 정수로 답하세요.
 box_2d 는 그 상품 줄에 있는 상품 사진(텍스트가 아닌 실제 이미지) 영역만 가리켜야 하며, 사진을 찾을 수 없으면 null 로 하세요.
 상품을 하나도 못 찾으면 {"items": []} 로 답하세요. price_cny 는 반드시 숫자(예: 19.9)로, 못 읽으면 null."""
 
@@ -1941,6 +1947,16 @@ def _extract_purchase_items(raw: bytes, mime: str) -> list[dict]:
     data = json.loads(resp.text)
     items = data.get("items")
     return items if isinstance(items, list) else []
+
+
+def _parse_qty(v: Any) -> int:
+    """Gemini가 정수/실수/문자열("2개" 등) 어떤 형태로 주든 수량을 최대한 살려서 파싱. 실패 시 1."""
+    try:
+        n = int(float(v))
+        return n if n > 0 else 1
+    except (TypeError, ValueError):
+        m = re.search(r"\d+", str(v or ""))
+        return int(m.group()) if m else 1
 
 
 def _fx_cny_to_krw() -> Optional[float]:
@@ -2042,7 +2058,7 @@ async def extract_purchase(body: PurchaseExtractIn, u: dict = Depends(current_us
             "shop_name": (str(it.get("shop_name")).strip() if it.get("shop_name") else None),
             "product_name": (str(it.get("product_name") or "")).strip()[:300] or "상품",
             "option_text": (str(it.get("option_text")).strip() if it.get("option_text") else None),
-            "quantity": int(it.get("quantity")) if str(it.get("quantity") or "").isdigit() else 1,
+            "quantity": _parse_qty(it.get("quantity")),
             "price_cny": cny,
             "price_krw": round(cny * rate, 0) if (cny is not None and rate) else None,
             "fx_rate": rate,
@@ -2079,38 +2095,68 @@ def save_purchases(body: PurchaseSaveIn, u: dict = Depends(current_user)) -> dic
 
 
 @app.get("/purchases")
-def list_purchases(u: dict = Depends(current_user), cursor: Optional[int] = None, limit: int = 30) -> dict:
+def list_purchases(
+    u: dict = Depends(current_user), cursor: Optional[int] = None, limit: int = 30,
+    date_from: Optional[str] = None, date_to: Optional[str] = None,
+    unreceived_only: bool = False,
+) -> dict:
     require_erp(u)
     limit = max(1, min(limit, 100))
-    where = "and id < :cur" if cursor else ""
-    binds = {"l": u["login_id"], "lim": limit}
+    conds = ["p.login_id = :l"]
+    binds: dict = {"l": u["login_id"]}
+    if unreceived_only:
+        conds.append("p.received = 0")
+    else:
+        eff = "coalesce(p.order_date, to_char(p.created_at, 'YYYY-MM-DD'))"
+        if date_from:
+            conds.append(f"{eff} >= :df"); binds["df"] = date_from
+        if date_to:
+            conds.append(f"{eff} <= :dt"); binds["dt"] = date_to
+    where = " and ".join(conds)
+
+    page_binds = dict(binds, lim=limit)
+    page_where = where
     if cursor:
-        binds["cur"] = cursor
+        page_where += " and p.id < :cur"
+        page_binds["cur"] = cursor
+
     rows = qall(
         "select p.id, p.shop_name, p.product_name, p.option_text, p.quantity, p.price_cny, p.price_krw, "
-        "p.fx_rate, p.order_date, p.source_media_id, p.created_at, m.path thumb_path "
+        "p.fx_rate, p.order_date, p.source_media_id, p.received, p.created_at, m.path thumb_path "
         "from healthweb.purchase_item p left join healthweb.media m on m.id = p.thumb_media_id "
-        "where p.login_id = :l " + where + " "
-        "order by p.id desc fetch first :lim rows only",
-        **binds,
+        f"where {page_where} order by p.id desc fetch first :lim rows only",
+        **page_binds,
     )
     items = [{
         "id": r["id"], "shop_name": r["shop_name"], "product_name": r["product_name"],
         "option_text": r["option_text"], "quantity": r["quantity"],
         "price_cny": float(r["price_cny"]) if r["price_cny"] is not None else None,
         "price_krw": float(r["price_krw"]) if r["price_krw"] is not None else None,
-        "order_date": r["order_date"], "created_at": iso_z(r["created_at"]),
+        "order_date": r["order_date"], "received": bool(r["received"]),
+        "created_at": iso_z(r["created_at"]),
         "thumb_url": _media_url(r["thumb_path"])["url"] if r["thumb_path"] else None,
     } for r in rows]
     total = q1(
-        "select sum(price_krw) s, sum(price_cny) c from healthweb.purchase_item where login_id = :l",
-        l=u["login_id"],
+        f"select sum(price_krw) s, sum(price_cny) c from healthweb.purchase_item p where {where}",
+        **binds,
     )
     return {
         "items": items, "next_cursor": items[-1]["id"] if len(items) == limit else None,
         "total_krw": float(total["s"]) if total and total["s"] is not None else 0,
         "total_cny": float(total["c"]) if total and total["c"] is not None else 0,
     }
+
+
+@app.patch("/purchases/{pid}")
+def update_purchase(pid: int, body: PurchasePatchIn, u: dict = Depends(current_user)) -> dict:
+    require_erp(u)
+    n = dml(
+        "update healthweb.purchase_item set received = :v where id = :i and login_id = :l",
+        v=1 if body.received else 0, i=pid, l=u["login_id"],
+    )
+    if not n:
+        raise HTTPException(404, "없는 기록입니다")
+    return {"ok": True}
 
 
 @app.delete("/purchases/{pid}")

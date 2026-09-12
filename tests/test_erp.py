@@ -95,6 +95,7 @@ r = call("POST", "/purchases/extract", {"media_id": mid}, token=tok_u)
 show("extract", r); assert r[0] == 200 and isinstance(r[1]["items"], list) and len(r[1]["items"]) >= 1
 extracted = r[1]["items"][0]
 assert "블루투스" in extracted["product_name"] or "이어폰" in extracted["product_name"], extracted  # 한국어 번역 확인
+assert extracted["quantity"] == 2, extracted  # "数量: 2" 수량 추출 확인
 assert extracted["thumb_media_id"] and extracted["thumb_url"], extracted  # box_2d 크롭 성공 확인
 thumb_mid = extracted["thumb_media_id"]
 
@@ -121,6 +122,25 @@ by_id = {it["id"]: it for it in items}
 assert by_id[ids[0]]["thumb_url"], by_id[ids[0]]  # 썸네일 있는 항목
 assert by_id[ids[1]]["thumb_url"] is None, by_id[ids[1]]  # 수동 항목은 썸네일 없음
 assert round(r[1]["total_cny"], 1) == round(extracted["price_cny"] + 15, 1), r[1]
+
+print("7b) 입고 체크 + 미입고만 조회")
+assert by_id[ids[0]]["received"] is False and by_id[ids[1]]["received"] is False, items  # 기본값 미입고
+r = call("PATCH", f"/purchases/{ids[1]}", {"received": True}, token=tok_u)
+show("mark received", r); assert r[0] == 200
+r = call("GET", "/purchases?unreceived_only=true", token=tok_u)
+show("unreceived only", r); assert r[0] == 200
+unrec_ids = [it["id"] for it in r[1]["items"]]
+assert ids[0] in unrec_ids and ids[1] not in unrec_ids, r[1]
+r = call("PATCH", f"/purchases/{99999999}", {"received": True}, token=tok_u)
+show("patch nonexistent", r); assert r[0] == 404
+
+print("7c) 구매일자 기간 조회 (미입고만 조회는 기간 무시)")
+r = call("GET", "/purchases?date_from=2026-09-10&date_to=2026-09-10", token=tok_u)
+show("in range", r); assert r[0] == 200 and len(r[1]["items"]) == 2
+r = call("GET", "/purchases?date_from=2026-09-11&date_to=2026-09-20", token=tok_u)
+show("out of range", r); assert r[0] == 200 and len(r[1]["items"]) == 0 and r[1]["total_krw"] == 0
+r = call("GET", "/purchases?unreceived_only=true&date_from=2026-09-11&date_to=2026-09-20", token=tok_u)
+show("unreceived ignores range", r); assert r[0] == 200 and ids[0] in [it["id"] for it in r[1]["items"]]
 
 print("8) 상품명 비어있으면 저장 거부")
 r = call("POST", "/purchases", {"items": [{"product_name": "  "}]}, token=tok_u)

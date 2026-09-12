@@ -1066,8 +1066,24 @@ function SettingsView() {
   </div>`;
 }
 
-// ---------- 뷰: ERP (구매 기록) ----------
+// ---------- 뷰: ERP ----------
 function ErpView() {
+  const [tab, setTab] = useState("purchase");
+  return html`<div class="view erp">
+    <div class="seg erp-menu">
+      <button class=${tab === "purchase" ? "on" : ""} onClick=${() => setTab("purchase")}>구매</button>
+      <button class=${tab === "stock" ? "on" : ""} onClick=${() => setTab("stock")}>재고</button>
+      <button class=${tab === "sales" ? "on" : ""} onClick=${() => setTab("sales")}>판매</button>
+      <button class=${tab === "settle" ? "on" : ""} onClick=${() => setTab("settle")}>정산</button>
+    </div>
+    ${tab === "purchase" && html`<${ErpPurchaseView} />`}
+    ${tab === "stock" && html`<div class="empty">재고 기능은 준비 중이에요.</div>`}
+    ${tab === "sales" && html`<div class="empty">판매 기능은 준비 중이에요.</div>`}
+    ${tab === "settle" && html`<div class="empty">정산 기능은 준비 중이에요.</div>`}
+  </div>`;
+}
+
+function ErpPurchaseView() {
   const { toast } = useStore();
   const [receipt, setReceipt] = useState(null);
   const [extracting, setExtracting] = useState(false);
@@ -1077,16 +1093,42 @@ function ErpView() {
   const [list, setList] = useState(null);
   const [totals, setTotals] = useState({ krw: 0, cny: 0 });
 
+  const today = new Date();
+  today.setMinutes(today.getMinutes() - today.getTimezoneOffset());
+  const todayStr = today.toISOString().slice(0, 10);
+  const weekAgo = new Date(today); weekAgo.setDate(weekAgo.getDate() - 6);
+  const weekAgoStr = weekAgo.toISOString().slice(0, 10);
+  const [dateFrom, setDateFrom] = useState(weekAgoStr);
+  const [dateTo, setDateTo] = useState(todayStr);
+  const [unreceivedOnly, setUnreceivedOnly] = useState(false);
+
   const emptyRow = () => ({ shop_name: "", product_name: "", option_text: "", quantity: 1, price_cny: "", price_krw: "", thumb_media_id: null, thumb_url: null });
 
   const load = useCallback(async () => {
     try {
-      const d = await api("/purchases");
+      const qs = new URLSearchParams();
+      if (unreceivedOnly) {
+        qs.set("unreceived_only", "true");
+      } else {
+        if (dateFrom) qs.set("date_from", dateFrom);
+        if (dateTo) qs.set("date_to", dateTo);
+      }
+      const d = await api(`/purchases?${qs.toString()}`);
       setList(d.items);
       setTotals({ krw: d.total_krw || 0, cny: d.total_cny || 0 });
     } catch (e) { setList([]); }
-  }, []);
+  }, [dateFrom, dateTo, unreceivedOnly]);
   useEffect(() => { load(); }, [load]);
+
+  const toggleReceived = async (p) => {
+    const next = !p.received;
+    setList((l) => l.map((x) => (x.id === p.id ? { ...x, received: next } : x)));
+    try { await api(`/purchases/${p.id}`, { method: "PATCH", body: { received: next } }); }
+    catch (e) {
+      toast(e.detail, "err");
+      setList((l) => l.map((x) => (x.id === p.id ? { ...x, received: !next } : x)));
+    }
+  };
 
   const onReceipt = async (media) => {
     setReceipt(media);
@@ -1141,7 +1183,7 @@ function ErpView() {
     catch (e) { toast(e.detail, "err"); }
   };
 
-  return html`<div class="view erp">
+  return html`<div>
     <div class="panel">
       <p class="muted sm">주문 내역 스크린샷을 올리면 AI가 상품·가격을 읽어줘요.</p>
       <${ImageUpload} kind="receipt" value=${receipt} onChange=${onReceipt} label="스크린샷 올리기" />
@@ -1169,22 +1211,39 @@ function ErpView() {
       <button disabled=${saving} onClick=${save}>저장</button>
     </div>`}
 
+    <div class="panel erp-filter">
+      <div class="erp-filter-row">
+        <label>시작일
+          <input type="date" value=${dateFrom} disabled=${unreceivedOnly} onInput=${(e) => setDateFrom(e.target.value)} /></label>
+        <label>종료일
+          <input type="date" value=${dateTo} disabled=${unreceivedOnly} onInput=${(e) => setDateTo(e.target.value)} /></label>
+      </div>
+      <label class="check">
+        <input type="checkbox" checked=${unreceivedOnly} onInput=${(e) => setUnreceivedOnly(e.target.checked)} />
+        미입고만 보기 (기간과 상관없이 전체)
+      </label>
+    </div>
+
     <div class="erp-total">누적 ¥${totals.cny.toFixed(2)} · ₩${Math.round(totals.krw).toLocaleString()}</div>
 
     ${list === null
       ? html`<${Spinner} />`
       : list.length === 0
-        ? html`<div class="empty">아직 기록이 없어요.</div>`
+        ? html`<div class="empty">기록이 없어요.</div>`
         : list.map((p) => html`<div class="erp-item" key=${p.id}>
             ${p.thumb_url && html`<img class="erp-thumb" src=${p.thumb_url} alt="" />`}
             <div class="erp-item-main">
               <b>${p.product_name}</b>${p.option_text && html` <span class="muted sm">${p.option_text}</span>`}
               <div class="muted sm">${p.shop_name || ""}${p.quantity > 1 ? ` × ${p.quantity}` : ""}</div>
+              ${p.order_date && html`<div class="muted sm">${p.order_date}</div>`}
             </div>
             <div class="erp-item-price">
               ${p.price_krw != null && html`<div>₩${Math.round(p.price_krw).toLocaleString()}</div>`}
               ${p.price_cny != null && html`<div class="muted sm">¥${p.price_cny}</div>`}
             </div>
+            <label class="erp-received" title="입고 확인">
+              <input type="checkbox" checked=${p.received} onInput=${() => toggleReceived(p)} />
+            </label>
             <button class="row-del" onClick=${() => del(p.id)}>✕</button>
           </div>`)}
   </div>`;

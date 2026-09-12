@@ -58,7 +58,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | 텔레그램 알림 (옵트인) | `POST /push/telegram/code` → `{code,deep_link}` (10분 · 일회용) · `GET/DELETE /push/telegram` · `POST /internal/telegram/{link,unlink}` (`X-Internal-Key`, 봇→API 로컬 호출) |
 | 관리자 공지 | `GET/POST /admin/announcements` · `PATCH/DELETE /admin/announcements/:id` (오너 전용). `GET /notifications` 첫 페이지 응답에 `announcements`(활성 3개). `announcement`(title·body·link·starts_at·ends_at) 유효기간은 naive UTC, `_active_announcements()`. `parse_iso_utc()` 로 ISO(Z/offset/날짜만) → naive UTC |
 | 등급 (자기돌봄 습관) | `app_user.rank_level`(1~5)·`rank_score` — `/auth/me`·`GET /u/:handle`·`FEED_SQL`(글 작성자)에 노출. `_refresh_rank()` 를 `POST /weights`·`.../checkin` 성공 시 호출, 점수가 이전보다 클 때만 갱신(하락 없음). 등급 상승 시 `notification`(kind='rank', rank_level) + 텔레그램 |
-| ERP (구매 기록, 오너 지정 전용) | `PATCH /admin/users/:handle/erp-access`(`{erp_access}`, 오너 전용, handle=name) · `POST /purchases/extract`(`{media_id}` → Gemini 비전으로 상품명(한국어 번역)·위안화 가격·상품 사진 위치(`box_2d`) 추출, CNY→KRW 환율 자동 계산, 사진은 서버가 원본에서 크롭해 `item_thumb` media 로 저장 후 `thumb_media_id`/`thumb_url` 반환) · `POST /purchases`(`{items[](thumb_media_id? 포함),order_date?,source_media_id?}`) · `GET /purchases?cursor=` (`items`+`total_krw`+`total_cny`, 각 item에 `thumb_url`) · `DELETE /purchases/:id`(원본·썸네일 media 모두 GC). 전부 `require_erp()`(`app_user.erp_access`) 게이트 |
+| ERP (구매 기록, 오너 지정 전용) | `PATCH /admin/users/:handle/erp-access`(`{erp_access}`, 오너 전용, handle=name) · `POST /purchases/extract`(`{media_id}` → Gemini 비전으로 상품명(한국어 번역)·수량·위안화 가격·상품 사진 위치(`box_2d`) 추출, CNY→KRW 환율 자동 계산, 사진은 서버가 원본에서 크롭해 `item_thumb` media 로 저장 후 `thumb_media_id`/`thumb_url` 반환) · `POST /purchases`(`{items[](thumb_media_id? 포함),order_date?,source_media_id?}`) · `GET /purchases?cursor=&date_from=&date_to=&unreceived_only=` (기본은 필터 없음 — 최근 7일 기본값은 프론트가 계산해서 전달, `unreceived_only=true`면 기간 무시하고 `received=0`만. `items`+`total_krw`+`total_cny`는 현재 필터 범위 기준, 각 item에 `thumb_url`·`received`) · `PATCH /purchases/:id`(`{received}`, 입고 체크) · `DELETE /purchases/:id`(원본·썸네일 media 모두 GC). 전부 `require_erp()`(`app_user.erp_access`) 게이트 |
 
 - bcrypt · PyJWT(HS256, 7일). 회원가입 폼은 비밀번호 확인 필드 포함(프론트 검증). `login_id`는 API 응답의 공개 컨텍스트(피드/프로필/댓글)에 절대 안 나감 — `name`만.
 - **P3a 리치 프로필**: `PATCH /auth/me` 에 `link`(URL 정규화·검증) · `location` · `pinned_post_id`(0이하 = 해제, 본인 글만). `GET /u/:handle` 에 `link`·`location`·`post_count`·`challenge_count`·`pinned`(고정 글, `posts`에서 제외)·`trend_series`(public 한정, 스파크라인용).
@@ -113,6 +113,9 @@ reflection→reflect, question→casual) 후 체크 제약 교체. 몸무게 공
 `'item_thumb'` 추가. **주의**: `media.kind` 컬럼이 `varchar2(12)`라 `'purchase_thumb'`(14자)는 ORA-12899로 insert 실패 —
 `'item_thumb'`(10자)로 줄여서 사용. 새 kind 값 추가 시 항상 컬럼 길이부터 확인할 것.
 
+`sql/047_purchase_received.sql` (**적용됨** — healthweb 유저): `purchase_item` +`received`(0/1, 기본 0) + 인덱스(login_id, received).
+입고 체크 여부. `GET /purchases`의 `unreceived_only=true` 필터가 이 컬럼 기준.
+
 ## VM 배포 (memo-agent)
 
 - `/opt/health-web-api/` : `healthweb-api.service`(uvicorn :8000) + `caddy.service`(`healthweb21.duckdns.org`).
@@ -153,10 +156,14 @@ CSS: `--rank-1~5`/`--rank-N-soft` 토큰(라이트/다크) + `.rank-badge`, 다�
 타오바오 등 주문내역 스크린샷 → Gemini 비전으로 상품·위안화 가격 자동 추출 → 위안화+원화(무료 환율 API, `open.er-api.com`) 저장.
 커뮤니티 핵심 기능과 무관한 **오너 지정 개인 유틸리티** — 오너가 `ProfileView` ⋯메뉴에서 사용자별로 `erp_access` 켜고 끔.
 탭바는 `me.erp_access` 가 true 인 사용자에게만 6번째 "ERP" 탭 노출(`.tabbar-6`), 나머지는 기존 5개.
-프론트: `ErpView`(`app.js`) — 영수증 업로드(`ImageUpload kind="receipt"`) → `/purchases/extract` 호출 → 추출 결과 편집 가능한 표
-(상점·상품명·옵션·수량·¥·₩) → 저장 → 아래 누적 목록(₩/¥ 합계, 개별 삭제). 영수증 원본은 `media` 테이블 재사용(`kind='receipt'`).
+프론트: `ErpView`(`app.js`) — 상단 서브메뉴 "구매/재고/판매/정산"(`.seg`, 순차 구현 예정 — 현재 구매만 동작, 나머지는 준비 중 안내).
+`ErpPurchaseView` = 영수증 업로드(`ImageUpload kind="receipt"`) → `/purchases/extract` 호출 → 추출 결과 편집 가능한 표
+(사진 썸네일·상점·상품명·옵션·수량·¥·₩) → 주문일 입력 → 저장 → 조회 필터(시작일·종료일, 기본값 최근 7일 — 프론트가 로컬 타임존
+기준으로 계산해 채움 · "미입고만 보기" 체크 시 기간 무시하고 `received=0`인 항목 전체) → 누적 목록(₩/¥ 합계는 현재 필터 기준,
+각 항목에 구매일자·입고 체크박스(`PATCH /purchases/:id`)·개별 삭제). 영수증 원본은 `media` 테이블 재사용(`kind='receipt'`).
 `_extract_purchase_items()` 는 `run_in_threadpool` 로 동기 Gemini 호출 격리, `response_mime_type="application/json"` 로 JSON 강제.
-텍스트 없는 이미지는 `{"items": []}` 응답 — 추출 실패가 아니라 정상 케이스로 처리.
+텍스트 없는 이미지는 `{"items": []}` 응답 — 추출 실패가 아니라 정상 케이스로 처리. 수량은 `_parse_qty()`가 정수/실수/"2개"처럼
+단위 붙은 문자열까지 최대한 살려서 파싱(Gemini가 순수 정수가 아닌 값을 줄 때가 있어 문자열 `isdigit()` 검사만으로는 놓쳤었음).
 
 ## 미완 (Phase 3c+)
 

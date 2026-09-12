@@ -40,7 +40,7 @@ cp .env.example .env   # HEALTHWEB_DB_PASSWORD 등 값 채우기 (.env는 git �
 | `test_rank.py` | 등급 점수 누적, 승급 알림, **하락 없음**(핵심 불변조건) |
 | `test_edit.py` | 글 수정(`PATCH /posts/:id`) 본문/권한/유효성 |
 | `test_kind.py` | 글 종류(자랑/도전/성찰/그냥) 검증 + 수정 시 종류 변경 |
-| `test_erp.py` | ERP 권한 게이팅, 오너 부여/회수, 영수증 업로드+Gemini 추출(실제 API 호출, 한국어 번역+상품 사진 썸네일 크롭), 저장/목록/합계/삭제+미디어 GC |
+| `test_erp.py` | ERP 권한 게이팅, 오너 부여/회수, 영수증 업로드+Gemini 추출(실제 API 호출, 한국어 번역+수량+상품 사진 썸네일 크롭), 저장/목록/합계/삭제+미디어 GC, 입고 체크(PATCH)+미입고만 조회, 구매일자 기간 필터 |
 
 ## 배포 전 회귀 체크리스트
 

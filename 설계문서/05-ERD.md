@@ -1,6 +1,6 @@
 # ERD — `healthweb` 스키마
 
-Oracle Autonomous DB(SHINDB), `healthweb` 전용 유저로 접속. 마이그레이션 파일: `sql/010`~`sql/046` (순서대로 적용).
+Oracle Autonomous DB(SHINDB), `healthweb` 전용 유저로 접속. 마이그레이션 파일: `sql/010`~`sql/047` (순서대로 적용).
 `BLOCK`·`COMMENT`가 Oracle 예약어라 테이블명은 `user_block`·`post_comment`를 쓴다.
 
 ```mermaid
@@ -137,6 +137,7 @@ erDiagram
         varchar2 order_date "YYYY-MM-DD, nullable"
         number source_media_id FK "영수증 원본, nullable"
         number thumb_media_id FK "AI가 크롭한 상품 사진, nullable"
+        number received "0/1, 기본 0 — 입고 체크"
         timestamp created_at
     }
     REPORT {
@@ -179,6 +180,7 @@ erDiagram
 | `044` | 글 종류 재편 — `post.kind` 값 교체(brag/resolve/reflect/casual, 표시 라벨 자랑/도전/성찰/그냥), 기존 데이터 최선 추정 매핑 |
 | `045` | ERP 구매 기록 — `app_user`+`erp_access`, `purchase_item` 신설, `media.kind` 체크 제약에 `'receipt'` 추가 |
 | `046` | ERP 상품 사진 — `purchase_item`+`thumb_media_id`, `media.kind` 체크 제약에 `'item_thumb'` 추가 |
+| `047` | ERP 입고 체크 — `purchase_item`+`received`(0/1, 기본 0) + 인덱스(login_id, received) |
 
 ## 알려진 특이사항
 
