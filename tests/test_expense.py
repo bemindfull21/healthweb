@@ -76,11 +76,21 @@ show("empty date", r); assert r[0] == 400
 r = call("POST", "/expenses", {"expense_date": "2026-09-10", "item_name": "  ", "amount_krw": 1000, "purchase_item_id": pid}, token=tok_u)
 show("empty name", r); assert r[0] == 400
 
-print("3c) 구매ID 없거나 남의 구매ID면 거부")
+print("3c) 존재하지 않거나 남의 구매ID면 거부")
 r = call("POST", "/expenses", {"expense_date": "2026-09-10", "item_name": "택배비", "amount_krw": 1000, "purchase_item_id": 99999999}, token=tok_u)
 show("nonexistent purchase id", r); assert r[0] == 400
 r = call("POST", "/expenses", {"expense_date": "2026-09-10", "item_name": "택배비", "amount_krw": 1000, "purchase_item_id": pid_other}, token=tok_u)
 show("other user's purchase id", r); assert r[0] == 400
+
+print("3d) 구매ID 미지정('기타')으로 등록 가능 — purchase_item_id 없이 저장")
+r = call("POST", "/expenses", {"expense_date": "2026-09-10", "item_name": "잡비", "amount_krw": 500}, token=tok_u)
+show("create without purchase id (기타)", r); assert r[0] == 200
+eid_other = r[1]["id"]
+r = call("GET", "/expenses?date_from=2026-09-10&date_to=2026-09-10", token=tok_u)
+row = next(x for x in r[1]["items"] if x["id"] == eid_other)
+assert row["purchase_no"] is None, row  # FE 는 이걸 "기타"로 표시
+r = call("DELETE", f"/expenses/{eid_other}", token=tok_u)
+assert r[0] == 200
 
 print("4) 기간 조회 — 범위 안/밖 + 구매ID 표시")
 r = call("GET", "/expenses?date_from=2026-09-10&date_to=2026-09-10", token=tok_u)

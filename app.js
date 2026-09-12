@@ -1300,14 +1300,13 @@ function ErpExpenseView() {
     if (!item_name) return toast("비용항목을 입력해 주세요", "err");
     const amount = Number(form.amount_krw);
     if (!amount) return toast("비용을 입력해 주세요", "err");
-    if (!form.purchase_item_id) return toast("관련 구매ID를 선택해 주세요", "err");
     setSaving(true);
     try {
       await api("/expenses", {
         method: "POST",
         body: {
           expense_date: form.expense_date, item_name, amount_krw: amount,
-          purchase_item_id: Number(form.purchase_item_id),
+          purchase_item_id: form.purchase_item_id ? Number(form.purchase_item_id) : null,
         },
       });
       setForm({ expense_date: form.expense_date, item_name: "", amount_krw: "", purchase_item_id: "" });
@@ -1339,8 +1338,8 @@ function ErpExpenseView() {
       <div class="erp-row-fields expense-form">
         <input type="date" value=${form.expense_date} onInput=${(e) => setForm({ ...form, expense_date: e.target.value })} />
         <select value=${form.purchase_item_id} onChange=${(e) => setForm({ ...form, purchase_item_id: e.target.value })}>
-          <option value="">구매ID 선택 (필수)</option>
-          ${recentPurchases.map((p) => html`<option value=${p.id} key=${p.id}>${p.purchase_no} · ${p.product_name}</option>`)}
+          <option value="">기타</option>
+          ${recentPurchases.map((p) => html`<option value=${p.id} key=${p.id}>${p.purchase_no}</option>`)}
         </select>
         <input placeholder="비용항목" value=${form.item_name} onInput=${(e) => setForm({ ...form, item_name: e.target.value })} />
         <input type="number" placeholder="₩" value=${form.amount_krw} onInput=${(e) => setForm({ ...form, amount_krw: e.target.value })} />
@@ -1364,7 +1363,7 @@ function ErpExpenseView() {
         : items.map((x) => html`<div class="erp-item" key=${x.id}>
             <div class="erp-item-main">
               <b>${x.item_name}</b>
-              <div class="muted sm">${x.purchase_no || ""}${x.purchase_no ? " · " : ""}${x.expense_date}</div>
+              <div class="muted sm">${x.purchase_no || "기타"} · ${x.expense_date}</div>
             </div>
             <input type="number" class="expense-amount" value=${x.amount_krw}
               onBlur=${(e) => updAmount(x, e.target.value)} />

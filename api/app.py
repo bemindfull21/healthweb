@@ -587,7 +587,7 @@ class ExpenseIn(BaseModel):
     expense_date: str
     item_name: str
     amount_krw: float
-    purchase_item_id: int
+    purchase_item_id: Optional[int] = None
 
 
 class ExpensePatchIn(BaseModel):
@@ -2236,16 +2236,18 @@ def create_expense(body: ExpenseIn, u: dict = Depends(current_user)) -> dict:
     item_name = body.item_name.strip()[:200]
     if not item_name:
         raise HTTPException(400, "비용항목을 입력해 주세요")
-    prow = q1(
-        "select 1 x from healthweb.purchase_item where id = :pid and login_id = :l",
-        pid=body.purchase_item_id, l=u["login_id"],
-    )
-    if prow is None:
-        raise HTTPException(400, "구매ID를 선택해 주세요")
+    pid = body.purchase_item_id
+    if pid is not None:
+        prow = q1(
+            "select 1 x from healthweb.purchase_item where id = :pid and login_id = :l",
+            pid=pid, l=u["login_id"],
+        )
+        if prow is None:
+            raise HTTPException(400, "구매ID를 확인해 주세요")
     eid = insert_id(
         "insert into healthweb.expense_item (login_id, expense_date, item_name, amount_krw, purchase_item_id) "
         "values (:l, :d, :n, :a, :pid) returning id into :new_id",
-        l=u["login_id"], d=expense_date, n=item_name, a=body.amount_krw, pid=body.purchase_item_id,
+        l=u["login_id"], d=expense_date, n=item_name, a=body.amount_krw, pid=pid,
     )
     return {"id": eid}
 

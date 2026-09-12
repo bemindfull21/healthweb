@@ -150,10 +150,13 @@ nullable). 판매 삭제(`DELETE /sales/:id`) 추가 — 남은 재고가 매번
 "폐기 비용을 삭제하려면 판매 목록에서 폐기판매를 삭제하세요"로 수정(2026-09-13).
 
 `sql/052_expense_purchase.sql` (**적용됨** — healthweb 유저): `expense_item` +`purchase_item_id`(→purchase_item, nullable).
-비용 등록(`POST /expenses`)에 관련 구매ID 지정을 필수로 만듦 — 본인 소유 구매건이 아니면 400. 컬럼 자체는 nullable로 둔 이유는
-기존 데이터(수동 등록분·폐기 자동생성분) 호환 때문. "재고" 탭 폐기 저장이 만드는 `expense_item`도 이제 폐기 대상의
-`purchase_item_id`를 그대로 저장(2026-09-13). `GET /expenses`·`GET /stock`·`GET /sales` 모두 `purchase_item`/`media` 조인을
-늘려 각각 `purchase_no`(비용 목록에 구매ID 표시)·`thumb_url`(재고·판매 목록에 상품 사진 표시)을 함께 내려줌.
+"재고" 탭 폐기 저장이 만드는 `expense_item`도 폐기 대상의 `purchase_item_id`를 그대로 저장. `GET /expenses`·`GET /stock`·
+`GET /sales` 모두 `purchase_item`/`media` 조인을 늘려 각각 `purchase_no`(비용 목록에 구매ID 표시)·`thumb_url`(재고·판매
+목록에 상품 사진 표시)을 함께 내려줌. **비용 등록의 구매ID는 처음엔 필수로 만들었다가(2026-09-13 오전) 곧바로 선택으로
+완화**(같은 날 오후) — 특정 구매와 무관한 비용(예: 공통 운영비)도 있어서 강제로 하나 고르게 하면 안 맞는 경우가 있었음.
+`ErpExpenseView`의 `<select>`는 이제 플레이스홀더가 "구매ID 선택 (필수)"가 아니라 "기타"(값은 빈 문자열 → `purchase_item_id:
+null` 전송)이고, 옵션 목록도 상품명 없이 `purchase_no`만 보여줌(상품명까지 보이면 목록이 너무 길어짐). 목록 조회에서
+`purchase_no`가 없는(= 기타로 등록된) 항목은 프론트가 "기타"로 표시.
 `ErpExpenseView`는 마운트 시 `GET /purchases?date_from=<한 달 전>&limit=100`를 한 번 불러와 등록 폼의 구매ID `<select>`를
 채움(기존 `GET /purchases`가 이미 `id desc`로 정렬해 주므로 별도 정렬 로직 불필요) — 선택 안 하면 저장 버튼에서 막힘.
 
@@ -208,8 +211,9 @@ CSS: `--rank-1~5`/`--rank-N-soft` 토큰(라이트/다크) + `.rank-badge`, 다�
 단위 붙은 문자열까지 최대한 살려서 파싱(Gemini가 순수 정수가 아닌 값을 줄 때가 있어 문자열 `isdigit()` 검사만으로는 놓쳤었음).
 `price_cny`/`price_krw`는 총액(단가×수량×환율), `unit_price_krw`(단가원화)는 그 총액/수량 — `sql/048_purchase_no.sql` 참고.
 
-`ErpExpenseView` = 등록 폼(일자·**구매ID `<select>`(필수, 2026-09-13 추가 — 마운트 시 최근 1개월 구매 건을 불러와 채움)**·
-항목·₩, "추가" 버튼) → 기간 필터(시작일·종료일, 기본값 최근 7일, 필터 바뀌면 자동 재조회) → 누적 목록(항목명·**구매ID**·일자,
+`ErpExpenseView` = 등록 폼(일자·**구매ID `<select>`(2026-09-13 추가 — 마운트 시 최근 1개월 구매 건을 불러와 채움, 기본값
+"기타"로 특정 구매와 연결 안 함, 옵션엔 `purchase_no`만 표시)**·항목·₩, "추가" 버튼) → 기간 필터(시작일·종료일, 기본값 최근
+7일, 필터 바뀌면 자동 재조회) → 누적 목록(항목명·**구매ID(또는 "기타")**·일자,
 금액 입력칸은 `onBlur`에 바뀐 값만 `PATCH /expenses/:id`로 저장 — 구매 탭의 입고 체크박스처럼 별도 저장 버튼 없이 즉시 저장하는
 패턴 재사용) · 개별 삭제(✕ + `confirm()`).
 

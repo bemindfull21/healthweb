@@ -122,7 +122,7 @@
 | GET | `/purchases?cursor=&limit=&date_from=&date_to=&unreceived_only=` | ✓(erp_access) | — | 커서 페이지네이션(id desc). `unreceived_only=true` 면 기간 무시하고 `received=0`인 항목 전체. 아니면 `date_from`/`date_to`(YYYY-MM-DD, `coalesce(order_date, created_at 날짜)` 기준, 둘 다 생략 시 무제한)로 필터. 전체 합계 `total_krw`·`total_cny`는 현재 필터 범위 기준. 각 item 에 `purchase_no`·`unit_price_krw`·`thumb_url`·`received`(bool) |
 | PATCH | `/purchases/:id` | ✓(erp_access) | `received: bool` | 입고 체크/해제. 본인 기록만(아니면 404) |
 | DELETE | `/purchases/:id` | ✓(erp_access) | — | 본인 기록만(아니면 404). `sale_item`에 판매 이력이 있으면 400 "판매 이력이 있어 삭제할 수 없습니다"(먼저 그 판매들을 지워야 함). 삭제 성공 시 원본 영수증·상품 썸네일 미디어 GC |
-| POST | `/expenses` | ✓(erp_access) | `expense_date, item_name, amount_krw, purchase_item_id` | `expense_date`·`item_name`(공백 제거 후) 필수, 비면 400. `purchase_item_id` 필수 — 본인 소유 구매건이 아니면 400 "구매ID를 선택해 주세요"(2026-09-13 추가, 컬럼 자체는 nullable — 기존 폐기 자동생성 건과의 호환 때문). `{id}` 반환 |
+| POST | `/expenses` | ✓(erp_access) | `expense_date, item_name, amount_krw, purchase_item_id?` | `expense_date`·`item_name`(공백 제거 후) 필수, 비면 400. `purchase_item_id`는 선택(옵션) — 값을 주면 본인 소유 구매건인지 검증(아니면 400 "구매ID를 확인해 주세요"), 생략하면 `null`로 저장되고 프론트는 이를 "기타"로 표시(2026-09-13: 처음엔 필수로 만들었다가, 특정 구매와 무관한 비용도 있어 선택으로 완화). `{id}` 반환 |
 | GET | `/expenses?date_from=&date_to=` | ✓(erp_access) | — | `expense_date` 기준 기간 필터(둘 다 생략 시 전체). `expense_date desc, id desc` 정렬. `purchase_item` left join으로 `purchase_no` 포함(연결 안 된 옛 데이터는 null). `{items:[...], total_krw}` |
 | PATCH | `/expenses/:id` | ✓(erp_access) | `amount_krw: float` | 금액 수정. 본인 기록만(아니면 404) |
 | DELETE | `/expenses/:id` | ✓(erp_access) | — | 본인 기록만(아니면 404). `sale_item`(폐기 판매)이 이 비용을 참조 중이면 400 "폐기 비용을 삭제하려면 판매 목록에서 폐기판매를 삭제하세요"(그 판매를 지우면 비용도 같이 지워짐) |
