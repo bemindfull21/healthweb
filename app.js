@@ -46,6 +46,7 @@ async function api(path, { method = "GET", body } = {}) {
 
 // ---------- 유틸 ----------
 const fmtKg = (n) => (Math.round(n * 10) / 10).toFixed(1);
+const trunc = (s, n) => (s && s.length > n ? s.slice(0, n) + "…" : s || "");
 function relTime(iso) {
   if (!iso) return "";
   const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
@@ -1531,22 +1532,26 @@ function ErpSalesView() {
       ? html`<${Spinner} />`
       : items.length === 0
         ? html`<div class="empty">판매 내역이 없어요.</div>`
-        : items.map((x) => html`<div class="erp-item" key=${x.id}>
-            ${x.thumb_url
-              ? html`<img class="erp-thumb" src=${x.thumb_url} alt="" />`
-              : html`<div class="erp-thumb erp-thumb-empty"></div>`}
-            <div class="erp-item-main">
-              <b>${x.product_name}</b>${x.is_waste && html` <span class="waste-badge">폐기</span>`}
-              <div class="muted sm">${x.purchase_no} · ${x.sale_date}</div>
+        : items.map((x) => html`<div class="erp-item erp-item-col" key=${x.id}>
+            <div class="erp-item-top">
+              ${x.thumb_url
+                ? html`<img class="erp-thumb" src=${x.thumb_url} alt="" />`
+                : html`<div class="erp-thumb erp-thumb-empty"></div>`}
+              <div class="erp-item-main">
+                <b title=${x.product_name}>${trunc(x.product_name, 10)}</b>${x.is_waste && html` <span class="waste-badge">폐기</span>`}
+                <div class="muted sm">${x.purchase_no} · ${x.sale_date}</div>
+              </div>
+              <button class="row-del" onClick=${() => del(x.id)}>✕</button>
             </div>
-            ${x.is_waste
-              ? html`<div class="muted sm">${x.sale_qty}개</div>`
-              : html`<div class="erp-row-fields sale-edit-fields">
-                  <input type="number" value=${x.sale_qty} onBlur=${(e) => upd(x, { sale_qty: e.target.value })} />
-                  <input type="number" value=${x.sale_price_krw} onBlur=${(e) => upd(x, { sale_price_krw: e.target.value })} />
-                </div>`}
-            <div class="erp-item-price">₩${Math.round(x.is_waste ? (x.waste_value_krw || 0) : x.sale_amount_krw).toLocaleString()}</div>
-            <button class="row-del" onClick=${() => del(x.id)}>✕</button>
+            <div class="erp-item-bottom">
+              ${x.is_waste
+                ? html`<span class="muted sm">${x.sale_qty}개</span>`
+                : html`<div class="erp-row-fields sale-edit-fields">
+                    <input type="number" value=${x.sale_qty} onBlur=${(e) => upd(x, { sale_qty: e.target.value })} />
+                    <input type="number" value=${x.sale_price_krw} onBlur=${(e) => upd(x, { sale_price_krw: e.target.value })} />
+                  </div>`}
+              <div class="erp-item-price">₩${Math.round(x.is_waste ? (x.waste_value_krw || 0) : x.sale_amount_krw).toLocaleString()}</div>
+            </div>
           </div>`)}
   </div>`;
 }

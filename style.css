@@ -541,6 +541,11 @@ img.avatar { object-fit: cover; display: block; }
 .erp-item-main { flex: 1; min-width: 0; }
 .erp-item-price { text-align: right; flex-shrink: 0; font-variant-numeric: tabular-nums; }
 
+.erp-item-col { flex-direction: column; align-items: stretch; }
+.erp-item-top { display: flex; gap: 10px; align-items: center; }
+.erp-item-bottom { display: flex; gap: 10px; align-items: center; justify-content: space-between; }
+.erp-item-bottom .erp-item-price { flex: 1; font-weight: 700; }
+
 .expense-form { grid-template-columns: 1fr 1fr; margin-bottom: 8px; }
 .expense-amount {
   width: 100px; flex-shrink: 0; text-align: right; margin: 0;
