@@ -517,7 +517,7 @@ img.avatar { object-fit: cover; display: block; }
 .erp-received { display: flex; align-items: center; margin: 0; }
 .erp-received input { width: auto; margin: 0; }
 
-.erp-qty-edit { display: flex; align-items: center; gap: 6px; margin-top: 2px; }
+.erp-qty-edit { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
 .erp-qty-input { width: 52px; margin: 0; text-align: center; font-variant-numeric: tabular-nums; }
 
 .erp-row {

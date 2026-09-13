@@ -217,6 +217,9 @@ CSS: `--rank-1~5`/`--rank-N-soft` 토큰(라이트/다크) + `.rank-badge`, 다�
 (1개여도 항상 표시, `onBlur`로 `PATCH /purchases/:id` 즉시 저장 — 비용/판매 탭과 동일한 패턴, 서버가 `unit_price_krw`를
 `price_krw/새수량`으로 재계산하고 이미 판매·폐기된 수량보다 적게는 못 줄이게 막음, 2026-09-13 추가)·입고 체크박스
 (`PATCH /purchases/:id`)·개별 삭제). 영수증 원본은 `media` 테이블 재사용(`kind='receipt'`).
+**목록도 판매·재고 탭과 같은 2단 레이아웃으로 정리**(2026-09-13) — 1단(사진·상품명 `trunc()` 10자 말줄임·옵션·상점·입고
+체크박스·삭제), 2단(수량 입력칸+개당단가 · 구매ID/₩/¥). 상품명이 길 때 목록 전체가 찌그러지던 문제를 판매·재고와 동일한
+방식으로 해결.
 `_extract_purchase_items()` 는 `run_in_threadpool` 로 동기 Gemini 호출 격리, `response_mime_type="application/json"` 로 JSON 강제.
 텍스트 없는 이미지는 `{"items": []}` 응답 — 추출 실패가 아니라 정상 케이스로 처리. 수량은 `_parse_qty()`가 정수/실수/"2개"처럼
 단위 붙은 문자열까지 최대한 살려서 파싱(Gemini가 순수 정수가 아닌 값을 줄 때가 있어 문자열 `isdigit()` 검사만으로는 놓쳤었음).

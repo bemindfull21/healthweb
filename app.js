@@ -1251,27 +1251,33 @@ function ErpPurchaseView() {
       ? html`<${Spinner} />`
       : list.length === 0
         ? html`<div class="empty">기록이 없어요.</div>`
-        : list.map((p) => html`<div class="erp-item" key=${p.id}>
-            ${p.thumb_url && html`<img class="erp-thumb" src=${p.thumb_url} alt="" />`}
-            <div class="erp-item-main">
-              <b>${p.product_name}</b>${p.option_text && html` <span class="muted sm">${p.option_text}</span>`}
-              ${p.shop_name && html`<div class="muted sm">${p.shop_name}</div>`}
+        : list.map((p) => html`<div class="erp-item erp-item-col" key=${p.id}>
+            <div class="erp-item-top">
+              ${p.thumb_url
+                ? html`<img class="erp-thumb" src=${p.thumb_url} alt="" />`
+                : html`<div class="erp-thumb erp-thumb-empty"></div>`}
+              <div class="erp-item-main">
+                <b title=${p.product_name}>${trunc(p.product_name, 10)}</b>${p.option_text && html` <span class="muted sm">${p.option_text}</span>`}
+                ${p.shop_name && html`<div class="muted sm">${p.shop_name}</div>`}
+              </div>
+              <label class="erp-received" title="입고 확인">
+                <input type="checkbox" checked=${p.received} onInput=${() => toggleReceived(p)} />
+              </label>
+              <button class="row-del" onClick=${() => del(p.id)}>✕</button>
+            </div>
+            <div class="erp-item-bottom">
               <div class="erp-qty-edit">
                 <span class="muted sm">수량</span>
                 <input type="number" class="erp-qty-input" min="1" value=${p.quantity}
                   onBlur=${(e) => updQty(p, e.target.value)} />
                 ${p.unit_price_krw != null && html`<span class="muted sm">개당 ₩${Math.round(p.unit_price_krw).toLocaleString()}</span>`}
               </div>
+              <div class="erp-item-price">
+                ${p.purchase_no && html`<div class="muted sm">${p.purchase_no}</div>`}
+                ${p.price_krw != null && html`<div>₩${Math.round(p.price_krw).toLocaleString()}</div>`}
+                ${p.price_cny != null && html`<div class="muted sm">¥${p.price_cny}</div>`}
+              </div>
             </div>
-            <div class="erp-item-price">
-              ${p.purchase_no && html`<div class="muted sm">${p.purchase_no}</div>`}
-              ${p.price_krw != null && html`<div>₩${Math.round(p.price_krw).toLocaleString()}</div>`}
-              ${p.price_cny != null && html`<div class="muted sm">¥${p.price_cny}</div>`}
-            </div>
-            <label class="erp-received" title="입고 확인">
-              <input type="checkbox" checked=${p.received} onInput=${() => toggleReceived(p)} />
-            </label>
-            <button class="row-del" onClick=${() => del(p.id)}>✕</button>
           </div>`)}
   </div>`;
 }
