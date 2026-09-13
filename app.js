@@ -1132,6 +1132,17 @@ function ErpPurchaseView() {
     }
   };
 
+  const updQty = async (p, v) => {
+    const qty = Number(v);
+    if (!qty || qty === p.quantity) return;
+    setList((l) => l.map((x) => (x.id === p.id ? { ...x, quantity: qty } : x)));
+    try { await api(`/purchases/${p.id}`, { method: "PATCH", body: { quantity: qty } }); load(); }
+    catch (e) {
+      toast(e.detail, "err");
+      setList((l) => l.map((x) => (x.id === p.id ? { ...x, quantity: p.quantity } : x)));
+    }
+  };
+
   const onReceipt = async (media) => {
     setReceipt(media);
     if (!media) { setDraft(null); return; }
@@ -1243,7 +1254,13 @@ function ErpPurchaseView() {
             ${p.thumb_url && html`<img class="erp-thumb" src=${p.thumb_url} alt="" />`}
             <div class="erp-item-main">
               <b>${p.product_name}</b>${p.option_text && html` <span class="muted sm">${p.option_text}</span>`}
-              <div class="muted sm">${p.shop_name || ""}${p.quantity > 1 ? ` × ${p.quantity}` : ""}${p.unit_price_krw != null && p.quantity > 1 ? ` (개당 ₩${Math.round(p.unit_price_krw).toLocaleString()})` : ""}</div>
+              ${p.shop_name && html`<div class="muted sm">${p.shop_name}</div>`}
+              <div class="erp-qty-edit">
+                <span class="muted sm">수량</span>
+                <input type="number" class="erp-qty-input" min="1" value=${p.quantity}
+                  onBlur=${(e) => updQty(p, e.target.value)} />
+                ${p.unit_price_krw != null && html`<span class="muted sm">개당 ₩${Math.round(p.unit_price_krw).toLocaleString()}</span>`}
+              </div>
             </div>
             <div class="erp-item-price">
               ${p.purchase_no && html`<div class="muted sm">${p.purchase_no}</div>`}

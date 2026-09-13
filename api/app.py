@@ -580,7 +580,8 @@ class PurchaseSaveIn(BaseModel):
 
 
 class PurchasePatchIn(BaseModel):
-    received: bool
+    received: Optional[bool] = None
+    quantity: Optional[int] = None
 
 
 class ExpenseIn(BaseModel):
@@ -2198,12 +2199,34 @@ def list_purchases(
 @app.patch("/purchases/{pid}")
 def update_purchase(pid: int, body: PurchasePatchIn, u: dict = Depends(current_user)) -> dict:
     require_erp(u)
-    n = dml(
-        "update healthweb.purchase_item set received = :v where id = :i and login_id = :l",
-        v=1 if body.received else 0, i=pid, l=u["login_id"],
+    row = q1(
+        "select price_krw from healthweb.purchase_item where id = :i and login_id = :l",
+        i=pid, l=u["login_id"],
     )
-    if not n:
+    if row is None:
         raise HTTPException(404, "없는 기록입니다")
+    sets: list[str] = []
+    binds: dict = {"i": pid, "l": u["login_id"]}
+    if body.received is not None:
+        sets.append("received = :r")
+        binds["r"] = 1 if body.received else 0
+    if body.quantity is not None:
+        if body.quantity <= 0:
+            raise HTTPException(400, "수량은 1 이상이어야 합니다")
+        sold = q1(
+            "select coalesce(sum(sale_qty), 0) s from healthweb.sale_item where purchase_item_id = :i",
+            i=pid,
+        )
+        if body.quantity < sold["s"]:
+            raise HTTPException(400, "이미 판매·폐기된 수량보다 적게 설정할 수 없습니다")
+        sets.append("quantity = :q")
+        binds["q"] = body.quantity
+        if row["price_krw"] is not None:
+            sets.append("unit_price_krw = :u")
+            binds["u"] = round(float(row["price_krw"]) / body.quantity, 0)
+    if not sets:
+        return {"ok": True}
+    dml(f"update healthweb.purchase_item set {', '.join(sets)} where id = :i and login_id = :l", **binds)
     return {"ok": True}
 
 

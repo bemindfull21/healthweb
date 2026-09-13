@@ -213,7 +213,9 @@ CSS: `--rank-1~5`/`--rank-N-soft` 토큰(라이트/다크) + `.rank-badge`, 다�
 `ErpPurchaseView` = 영수증 업로드(`ImageUpload kind="receipt"`) → `/purchases/extract` 호출 → 추출 결과 편집 가능한 표
 (사진 썸네일·상점·상품명·옵션·수량·¥·₩) → **주문일 입력(필수, 미입력 시 저장 버튼 비활성 + 서버도 400)** → 저장 → 조회 필터
 (시작일·종료일, 기본값 최근 7일 — 프론트가 로컬 타임존 기준으로 계산해 채움 · "미입고만 보기" 체크 시 기간 무시하고 `received=0`인
-항목 전체) → 누적 목록(₩/¥ 합계는 현재 필터 기준, 각 항목에 **구매ID**(₩ 금액 바로 위에 표시, 주문일자 대신)·입고 체크박스
+항목 전체) → 누적 목록(₩/¥ 합계는 현재 필터 기준, 각 항목에 **구매ID**(₩ 금액 바로 위에 표시, 주문일자 대신)·**수량 입력칸**
+(1개여도 항상 표시, `onBlur`로 `PATCH /purchases/:id` 즉시 저장 — 비용/판매 탭과 동일한 패턴, 서버가 `unit_price_krw`를
+`price_krw/새수량`으로 재계산하고 이미 판매·폐기된 수량보다 적게는 못 줄이게 막음, 2026-09-13 추가)·입고 체크박스
 (`PATCH /purchases/:id`)·개별 삭제). 영수증 원본은 `media` 테이블 재사용(`kind='receipt'`).
 `_extract_purchase_items()` 는 `run_in_threadpool` 로 동기 Gemini 호출 격리, `response_mime_type="application/json"` 로 JSON 강제.
 텍스트 없는 이미지는 `{"items": []}` 응답 — 추출 실패가 아니라 정상 케이스로 처리. 수량은 `_parse_qty()`가 정수/실수/"2개"처럼

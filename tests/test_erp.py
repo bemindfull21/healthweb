@@ -151,6 +151,20 @@ show("out of range", r); assert r[0] == 200 and len(r[1]["items"]) == 0 and r[1]
 r = call("GET", "/purchases?unreceived_only=true&date_from=2026-09-11&date_to=2026-09-20", token=tok_u)
 show("unreceived ignores range", r); assert r[0] == 200 and ids[0] in [it["id"] for it in r[1]["items"]]
 
+print("7d) 수량 변경 → 단가(원화) 재계산")
+orig = by_id[ids[0]]
+r = call("PATCH", f"/purchases/{ids[0]}", {"quantity": 4}, token=tok_u)
+show("patch quantity", r); assert r[0] == 200
+r = call("GET", "/purchases", token=tok_u)
+row = next(x for x in r[1]["items"] if x["id"] == ids[0])
+assert row["quantity"] == 4, row
+assert row["unit_price_krw"] == round(orig["price_krw"] / 4, 0), (row, orig)
+assert row["price_krw"] == orig["price_krw"], row  # 총액은 그대로, 단가만 재계산
+
+print("7e) 수량은 1 이상이어야 함")
+r = call("PATCH", f"/purchases/{ids[0]}", {"quantity": 0}, token=tok_u)
+show("patch qty zero", r); assert r[0] == 400
+
 print("8) 상품명 비어있으면 저장 거부")
 r = call("POST", "/purchases", {"items": [{"product_name": "  "}], "order_date": "2026-09-10"}, token=tok_u)
 show("empty product", r); assert r[0] == 400

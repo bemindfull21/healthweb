@@ -81,6 +81,19 @@ r = call("GET", "/stock", token=tok_u)
 item = next(x for x in r[1]["items"] if x["purchase_item_id"] == pid)
 assert item["remaining_qty"] == 7, item
 
+print("4b) 이미 판매된 수량보다 적게 구매 수량 변경 불가 (판매된 만큼까지는 허용)")
+r = call("PATCH", f"/purchases/{pid}", {"quantity": 2}, token=tok_u)  # 이미 3개 판매됨
+show("reduce below sold", r); assert r[0] == 400
+r = call("PATCH", f"/purchases/{pid}", {"quantity": 3}, token=tok_u)
+show("reduce to sold exactly", r); assert r[0] == 200
+r = call("GET", "/stock", token=tok_u)
+assert pid not in [x["purchase_item_id"] for x in r[1]["items"]], r[1]  # 남은수량 0 → 재고 목록에서 빠짐
+r = call("PATCH", f"/purchases/{pid}", {"quantity": 10}, token=tok_u)  # 원상복구 — 이후 테스트가 quantity=10 가정
+show("restore quantity", r); assert r[0] == 200
+r = call("GET", "/stock", token=tok_u)
+item = next(x for x in r[1]["items"] if x["purchase_item_id"] == pid)
+assert item["remaining_qty"] == 7, item
+
 print("5) 판매 목록 조회 — 판매일자/구매ID/상품/수량/가격/금액")
 r = call("GET", "/sales?date_from=2026-09-05&date_to=2026-09-05", token=tok_u)
 show("sales list", r); assert r[0] == 200 and len(r[1]["items"]) == 1
