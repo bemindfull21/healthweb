@@ -1444,25 +1444,29 @@ function ErpStockView() {
         ? html`<div class="empty">재고가 없어요.</div>`
         : items.map((it) => {
             const s = sel[it.purchase_item_id] || {};
-            return html`<div class="erp-item" key=${it.purchase_item_id}>
-              <label class="erp-received" title="판매할 상품 선택">
-                <input type="checkbox" checked=${!!s.checked}
-                  onInput=${(e) => setRow(it.purchase_item_id, { checked: e.target.checked })} />
-              </label>
-              ${it.thumb_url
-                ? html`<img class="erp-thumb" src=${it.thumb_url} alt="" />`
-                : html`<div class="erp-thumb erp-thumb-empty"></div>`}
-              <div class="erp-item-main">
-                <b>${it.product_name}</b>
-                <div class="muted sm">${it.purchase_no} · 재고 ${it.remaining_qty} · 개당 ₩${Math.round(it.unit_price_krw || 0).toLocaleString()}</div>
+            return html`<div class="erp-item erp-item-col" key=${it.purchase_item_id}>
+              <div class="erp-item-top">
+                <label class="erp-received" title="판매할 상품 선택">
+                  <input type="checkbox" checked=${!!s.checked}
+                    onInput=${(e) => setRow(it.purchase_item_id, { checked: e.target.checked })} />
+                </label>
+                ${it.thumb_url
+                  ? html`<img class="erp-thumb" src=${it.thumb_url} alt="" />`
+                  : html`<div class="erp-thumb erp-thumb-empty"></div>`}
+                <div class="erp-item-main">
+                  <b title=${it.product_name}>${trunc(it.product_name, 10)}</b>
+                  <div class="muted sm">${it.purchase_no} · 재고 ${it.remaining_qty} · 개당 ₩${Math.round(it.unit_price_krw || 0).toLocaleString()}</div>
+                </div>
+              </div>
+              <div class="erp-item-bottom">
                 ${s.checked && html`<div class="erp-row-fields stock-sale-fields">
                   <input type="number" placeholder="판매수량" min="1" max=${it.remaining_qty}
                     value=${s.qty ?? 1} onInput=${(e) => setRow(it.purchase_item_id, { qty: e.target.value })} />
                   <input type="number" placeholder="판매가(₩)" value=${s.price ?? it.unit_price_krw ?? ""}
                     onInput=${(e) => setRow(it.purchase_item_id, { price: e.target.value })} />
                 </div>`}
+                <div class="erp-item-price">₩${Math.round(it.remaining_amount_krw || 0).toLocaleString()}</div>
               </div>
-              <div class="erp-item-price">₩${Math.round(it.remaining_amount_krw || 0).toLocaleString()}</div>
             </div>`;
           })}
     ${items && items.length > 0 && html`<div class="stock-save-actions">

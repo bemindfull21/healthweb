@@ -552,7 +552,7 @@ img.avatar { object-fit: cover; display: block; }
   font-variant-numeric: tabular-nums;
 }
 
-.stock-sale-fields { margin-top: 6px; }
+.stock-sale-fields { flex-shrink: 0; width: 140px; }
 .stock-save-actions { display: flex; gap: 8px; }
 .stock-save-actions button { flex: 1; }
 .sale-edit-fields { flex-shrink: 0; width: 140px; }
