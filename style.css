@@ -562,6 +562,13 @@ img.avatar { object-fit: cover; display: block; }
   border-radius: 6px; padding: 1px 5px; margin-left: 4px; vertical-align: middle;
 }
 
+.erp-listed-badge {
+  flex-shrink: 0; width: auto; margin: 0; font-size: .78rem; font-weight: 600;
+  padding: 4px 10px; border-radius: 999px; background: transparent; color: var(--muted);
+  border: 1px solid var(--border);
+}
+.erp-listed-badge.on { background: var(--accent-soft); color: var(--accent); border-color: transparent; }
+
 .profit-table { font-variant-numeric: tabular-nums; }
 .profit-row {
   display: grid; grid-template-columns: 1.2fr 1fr 1fr 1fr 1fr; gap: 6px;

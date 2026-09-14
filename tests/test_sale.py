@@ -65,6 +65,22 @@ assert item["unit_price_krw"] == 100, item
 assert item["remaining_amount_krw"] == 1000, item
 assert "thumb_url" in item and item["thumb_url"] is None, item  # 썸네일 없는 구매 건은 null
 
+print("2b) 게시 여부 — 기본 미게시, PATCH로 게시 처리 + 미게시만 보기 필터")
+assert item["is_listed"] is False, item
+r = call("GET", "/stock?unlisted_only=1", token=tok_u)
+show("unlisted_only before listing", r)
+assert pid in [x["purchase_item_id"] for x in r[1]["items"]], r[1]  # 기본 미게시라 필터에 걸림
+r = call("PATCH", f"/purchases/{pid}", {"is_listed": True}, token=tok_u)
+show("mark listed", r); assert r[0] == 200
+r = call("GET", "/stock", token=tok_u)
+item = next(x for x in r[1]["items"] if x["purchase_item_id"] == pid)
+assert item["is_listed"] is True, item
+r = call("GET", "/stock?unlisted_only=1", token=tok_u)
+show("unlisted_only after listing", r)
+assert pid not in [x["purchase_item_id"] for x in r[1]["items"]], r[1]  # 게시됨 → 미게시 필터에서 제외
+r = call("PATCH", f"/purchases/{pid}", {"is_listed": False}, token=tok_u)  # 원복 — 이후 단계 영향 없게
+assert r[0] == 200
+
 print("3) 재고 수량 초과 판매 거부")
 r = call("POST", "/sales", {"sale_date": "2026-09-05", "items": [
     {"purchase_item_id": pid, "sale_qty": 11, "sale_price_krw": 150},

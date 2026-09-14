@@ -582,6 +582,7 @@ class PurchaseSaveIn(BaseModel):
 class PurchasePatchIn(BaseModel):
     received: Optional[bool] = None
     quantity: Optional[int] = None
+    is_listed: Optional[bool] = None
 
 
 class ExpenseIn(BaseModel):
@@ -2210,6 +2211,9 @@ def update_purchase(pid: int, body: PurchasePatchIn, u: dict = Depends(current_u
     if body.received is not None:
         sets.append("received = :r")
         binds["r"] = 1 if body.received else 0
+    if body.is_listed is not None:
+        sets.append("is_listed = :il")
+        binds["il"] = 1 if body.is_listed else 0
     if body.quantity is not None:
         if body.quantity <= 0:
             raise HTTPException(400, "수량은 1 이상이어야 합니다")
@@ -2339,18 +2343,18 @@ def delete_expense(eid: int, u: dict = Depends(current_user)) -> dict:
 # ---------- ERP: 재고/판매 ----------
 
 @app.get("/stock")
-def list_stock(u: dict = Depends(current_user)) -> dict:
+def list_stock(u: dict = Depends(current_user), unlisted_only: bool = False) -> dict:
     require_erp(u)
     rows = qall(
         "select * from ("
-        "  select p.id, p.purchase_no, p.product_name, p.quantity, p.unit_price_krw, m.path thumb_path, "
+        "  select p.id, p.purchase_no, p.product_name, p.quantity, p.unit_price_krw, p.is_listed, m.path thumb_path, "
         "         p.quantity - coalesce(s.sold, 0) as remaining_qty "
         "  from healthweb.purchase_item p "
         "  left join healthweb.media m on m.id = p.thumb_media_id "
         "  left join (select purchase_item_id, sum(sale_qty) sold from healthweb.sale_item group by purchase_item_id) s "
         "    on s.purchase_item_id = p.id "
         "  where p.login_id = :l and p.received = 1"
-        ") where remaining_qty > 0 order by id desc",
+        ") where remaining_qty > 0" + (" and is_listed = 0" if unlisted_only else "") + " order by id desc",
         l=u["login_id"],
     )
     items = [{
@@ -2360,6 +2364,7 @@ def list_stock(u: dict = Depends(current_user)) -> dict:
         "remaining_amount_krw": (
             float(r["unit_price_krw"]) * r["remaining_qty"] if r["unit_price_krw"] is not None else None
         ),
+        "is_listed": bool(r["is_listed"]),
         "thumb_url": _media_url(r["thumb_path"])["url"] if r["thumb_path"] else None,
     } for r in rows]
     return {"items": items}

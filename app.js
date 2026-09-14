@@ -1401,18 +1401,29 @@ function ErpStockView() {
   const [items, setItems] = useState(null);
   const [sel, setSel] = useState({});
   const [saving, setSaving] = useState(false);
+  const [unlistedOnly, setUnlistedOnly] = useState(false);
 
   const today = new Date();
   today.setMinutes(today.getMinutes() - today.getTimezoneOffset());
   const [saleDate, setSaleDate] = useState(today.toISOString().slice(0, 10));
 
   const load = useCallback(async () => {
-    try { setItems((await api("/stock")).items); }
+    try { setItems((await api(`/stock?unlisted_only=${unlistedOnly ? 1 : 0}`)).items); }
     catch (e) { setItems([]); }
-  }, []);
+  }, [unlistedOnly]);
   useEffect(() => { load(); }, [load]);
 
   const setRow = (id, patch) => setSel((s) => ({ ...s, [id]: { ...(s[id] || {}), ...patch } }));
+
+  const toggleListed = async (it) => {
+    const next = !it.is_listed;
+    setItems((l) => l.map((x) => (x.purchase_item_id === it.purchase_item_id ? { ...x, is_listed: next } : x)));
+    try { await api(`/purchases/${it.purchase_item_id}`, { method: "PATCH", body: { is_listed: next } }); }
+    catch (e) {
+      toast(e.detail, "err");
+      setItems((l) => l.map((x) => (x.purchase_item_id === it.purchase_item_id ? { ...x, is_listed: !next } : x)));
+    }
+  };
 
   const save = async (isWaste) => {
     const chosen = (items || []).filter((it) => sel[it.purchase_item_id]?.checked);
@@ -1440,8 +1451,12 @@ function ErpStockView() {
   };
 
   return html`<div>
-    <div class="panel">
+    <div class="panel erp-filter">
       <label>판매일<input type="date" value=${saleDate} onInput=${(e) => setSaleDate(e.target.value)} /></label>
+      <label class="check">
+        <input type="checkbox" checked=${unlistedOnly} onInput=${(e) => setUnlistedOnly(e.target.checked)} />
+        미게시만 보기
+      </label>
     </div>
 
     ${items === null
@@ -1463,6 +1478,9 @@ function ErpStockView() {
                   <b title=${it.product_name}>${trunc(it.product_name, 10)}</b>
                   <div class="muted sm">${it.purchase_no} · 재고 ${it.remaining_qty} · 개당 ₩${Math.round(it.unit_price_krw || 0).toLocaleString()}</div>
                 </div>
+                <button class=${`erp-listed-badge ${it.is_listed ? "on" : ""}`} onClick=${() => toggleListed(it)}>
+                  ${it.is_listed ? "게시됨" : "미게시"}
+                </button>
               </div>
               <div class="erp-item-bottom">
                 ${s.checked && html`<div class="erp-row-fields stock-sale-fields">

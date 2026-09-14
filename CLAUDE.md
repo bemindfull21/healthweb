@@ -36,8 +36,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   폰트 없이 폴리라인으로 M 그림)로 생성 — 색·모양 바꾸면 `api/venv/Scripts/python.exe scripts/make_icons.py` 재실행.
   `manifest.json`(`display:standalone`) + 4개 HTML 전부에 `apple-touch-icon`·`manifest`·`theme-color` 링크.
 - **캐시버스터**: `app.js`·`style.css`·`config.js`·`landing.js`도 아이콘과 동일하게 참조하는 HTML(`app.html`·`index.html`·`challenge.html`·
-  `about.html`·`install-guide.html`)에서 `?v=N`로 부른다(2026-09-12 도입, 파일별로 따로 버전 관리 — 현재 `app.js`는 `v=12`,
-  `style.css`는 `v=10`, `config.js`/`landing.js`는 `v=1`). Fastly CDN이 `max-age=600`이라 버전을 안 올리면
+  `about.html`·`install-guide.html`)에서 `?v=N`로 부른다(2026-09-12 도입, 파일별로 따로 버전 관리 — 현재 `app.js`는 `v=13`,
+  `style.css`는 `v=11`, `config.js`/`landing.js`는 `v=1`). Fastly CDN이 `max-age=600`이라 버전을 안 올리면
   배포해도 사용자는 최대 10분 넘게 옛 코드를 봄 — **네 파일 중 하나라도 고치면 참조하는 모든 HTML의 그 파일 `?v=`를 함께 올릴 것.**
   "고쳤는데 반영이 안 됐다"는 신고가 오면 `curl -s https://bemindfull21.github.io/healthweb/app.js | grep <문자열>`로 배포된 코드부터 확인.
 - 로컬 테스트: `app.js`의 `const API` + `config.js`의 `window.HW.API` 를 `http://127.0.0.1:8971`로 `sed` (테스트 후 `git checkout config.js` + 역치환). 정적은 `python -m http.server 8080`.
@@ -63,7 +63,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | 텔레그램 알림 (옵트인) | `POST /push/telegram/code` → `{code,deep_link}` (10분 · 일회용) · `GET/DELETE /push/telegram` · `POST /internal/telegram/{link,unlink}` (`X-Internal-Key`, 봇→API 로컬 호출) |
 | 관리자 공지 | `GET/POST /admin/announcements` · `PATCH/DELETE /admin/announcements/:id` (오너 전용). `GET /notifications` 첫 페이지 응답에 `announcements`(활성 3개). `announcement`(title·body·link·starts_at·ends_at) 유효기간은 naive UTC, `_active_announcements()`. `parse_iso_utc()` 로 ISO(Z/offset/날짜만) → naive UTC |
 | 등급 (자기돌봄 습관) | `app_user.rank_level`(1~5)·`rank_score` — `/auth/me`·`GET /u/:handle`·`FEED_SQL`(글 작성자)에 노출. `_refresh_rank()` 를 `POST /weights`·`.../checkin` 성공 시 호출, 점수가 이전보다 클 때만 갱신(하락 없음). 등급 상승 시 `notification`(kind='rank', rank_level) + 텔레그램 |
-| ERP (구매 기록, 오너 지정 전용) | `PATCH /admin/users/:handle/erp-access`(`{erp_access}`, 오너 전용, handle=name) · `POST /purchases/extract`(`{media_id}` → Gemini 비전으로 상품명(한국어 번역)·수량·위안화 가격·상품 사진 위치(`box_2d`) 추출, CNY→KRW 환율 자동 계산, 사진은 서버가 원본에서 크롭해 `item_thumb` media 로 저장 후 `thumb_media_id`/`thumb_url` 반환) · `POST /purchases`(`{items[](thumb_media_id? 포함),order_date,source_media_id?}`, **order_date 필수** — 빈 값이면 400) · `GET /purchases?cursor=&date_from=&date_to=&unreceived_only=` (기본은 필터 없음 — 최근 7일 기본값은 프론트가 계산해서 전달, `unreceived_only=true`면 기간 무시하고 `received=0`만. `items`+`total_krw`+`total_cny`는 현재 필터 범위 기준, 각 item에 `thumb_url`·`received`) · `PATCH /purchases/:id`(`{received}`, 입고 체크) · `DELETE /purchases/:id`(원본·썸네일 media 모두 GC). 전부 `require_erp()`(`app_user.erp_access`) 게이트 |
+| ERP (구매 기록, 오너 지정 전용) | `PATCH /admin/users/:handle/erp-access`(`{erp_access}`, 오너 전용, handle=name) · `POST /purchases/extract`(`{media_id}` → Gemini 비전으로 상품명(한국어 번역)·수량·위안화 가격·상품 사진 위치(`box_2d`) 추출, CNY→KRW 환율 자동 계산, 사진은 서버가 원본에서 크롭해 `item_thumb` media 로 저장 후 `thumb_media_id`/`thumb_url` 반환) · `POST /purchases`(`{items[](thumb_media_id? 포함),order_date,source_media_id?}`, **order_date 필수** — 빈 값이면 400) · `GET /purchases?cursor=&date_from=&date_to=&unreceived_only=` (기본은 필터 없음 — 최근 7일 기본값은 프론트가 계산해서 전달, `unreceived_only=true`면 기간 무시하고 `received=0`만. `items`+`total_krw`+`total_cny`는 현재 필터 범위 기준, 각 item에 `thumb_url`·`received`) · `PATCH /purchases/:id`(`{received?,quantity?,is_listed?}`, 보낸 필드만 수정) · `DELETE /purchases/:id`(원본·썸네일 media 모두 GC). 전부 `require_erp()`(`app_user.erp_access`) 게이트 |
 
 - bcrypt · PyJWT(HS256, 7일). 회원가입 폼은 비밀번호 확인 필드 포함(프론트 검증). `login_id`는 API 응답의 공개 컨텍스트(피드/프로필/댓글)에 절대 안 나감 — `name`만.
 - **P3a 리치 프로필**: `PATCH /auth/me` 에 `link`(URL 정규화·검증) · `location` · `pinned_post_id`(0이하 = 해제, 본인 글만). `GET /u/:handle` 에 `link`·`location`·`post_count`·`challenge_count`·`pinned`(고정 글, `posts`에서 제외)·`trend_series`(public 한정, 스파크라인용).
@@ -168,6 +168,11 @@ null` 전송)이고, 옵션 목록도 상품명 없이 `purchase_no`만 보여�
 **판매 목록의 폐기 건 금액 표시**(2026-09-13): 실제 `sale_amount_krw`는 매출이 아니므로 계속 0으로 저장·집계되지만
 (손익·누적합계는 안 흔들림), 화면에는 0 대신 `waste_value_krw`(=폐기수량×구매단가) — "이 폐기로 날린 금액이 얼마인지"를
 바로 보여주기 위한 표시 전용 값. `GET /sales`가 `purchase_item.unit_price_krw`를 조인해서 서버가 계산해 내려줌.
+
+`sql/053_purchase_listed.sql` (**적용됨** — healthweb 유저): `purchase_item` +`is_listed`(0/1, 기본 0) — "재고" 탭에서
+상품을 판매사이트에 게시했는지 표시. `GET /stock?unlisted_only=`로 미게시 건만 필터 가능, `PATCH /purchases/:id`
+`{is_listed}`로 토글. `ErpStockView` 각 카드 우측에 "게시됨"/"미게시" 배지 버튼(탭하면 즉시 PATCH, 별도 저장 버튼 없음
+— 기존 `toggleReceived`와 동일한 optimistic-update+rollback 패턴) + 필터 패널에 "미게시만 보기" 체크박스 추가(2026-09-15).
 
 ## VM 배포 (memo-agent)
 
