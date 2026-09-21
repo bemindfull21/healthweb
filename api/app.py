@@ -571,12 +571,12 @@ class PurchaseItemIn(BaseModel):
     price_krw: Optional[float] = None
     fx_rate: Optional[float] = None
     thumb_media_id: Optional[int] = None
+    source_media_id: Optional[int] = None
 
 
 class PurchaseSaveIn(BaseModel):
     items: list[PurchaseItemIn]
     order_date: str
-    source_media_id: Optional[int] = None
 
 
 class PurchasePatchIn(BaseModel):
@@ -1989,16 +1989,27 @@ def _parse_qty(v: Any) -> int:
         return int(m.group()) if m else 1
 
 
+_fx_cache: dict[str, Any] = {"rate": None, "at": 0.0}
+FX_CACHE_TTL = 600  # 10분 — 다중 이미지 순차 추출 시마다 환율이 흔들리면 같은 상품 금액이 갈려 중복 판정이 깨짐
+
+
 def _fx_cny_to_krw() -> Optional[float]:
-    """CNY->KRW 환율. 실패하면 None(원화 환산 없이 위안화만 저장)."""
+    """CNY->KRW 환율. 실패하면 None(원화 환산 없이 위안화만 저장). 짧게 캐시해 한 구매등록 세션 안에서는 일정하게 유지."""
+    now = time.time()
+    if _fx_cache["rate"] is not None and now - _fx_cache["at"] < FX_CACHE_TTL:
+        return _fx_cache["rate"]
     try:
         req = urllib.request.Request("https://open.er-api.com/v6/latest/CNY")
         with urllib.request.urlopen(req, timeout=8) as r:
             data = json.loads(r.read())
         rate = data.get("rates", {}).get("KRW")
-        return float(rate) if rate else None
+        rate = float(rate) if rate else None
     except Exception:
-        return None
+        rate = None
+    if rate is not None:
+        _fx_cache["rate"] = rate
+        _fx_cache["at"] = now
+    return rate
 
 
 def _crop_purchase_thumb(raw: bytes, box: Any, login_id: str) -> Optional[dict]:
@@ -2057,7 +2068,9 @@ async def extract_purchase(body: PurchaseExtractIn, u: dict = Depends(current_us
     require_erp(u)
     if not GEMINI_API_KEY:
         raise HTTPException(503, "AI 추출 기능이 설정되지 않았습니다")
-    if not rate_ok(f"extract:{u['login_id']}", 10, 3600):
+    # 구매등록이 스크린샷 최대 10장까지 지원(프론트가 이미지마다 이 엔드포인트를 순차 호출) —
+    # 세션당 1회 호출 기준이던 예전 한도(10/hour)로는 한 세션도 못 채워 상향
+    if not rate_ok(f"extract:{u['login_id']}", 60, 3600):
         raise HTTPException(429, "요청이 많습니다. 잠시 후 다시 시도해 주세요")
     _own_media(body.media_id, u["login_id"], "receipt")
     m = q1("select path from healthweb.media where id = :i", i=body.media_id)
@@ -2112,7 +2125,6 @@ def save_purchases(body: PurchaseSaveIn, u: dict = Depends(current_user)) -> dic
     order_date = body.order_date.strip()
     if not order_date:
         raise HTTPException(400, "구매일자를 입력해 주세요")
-    smid = _own_media(body.source_media_id, u["login_id"], "receipt")
     row = q1(
         "select count(*) c from healthweb.purchase_item where login_id = :l and order_date = :od",
         l=u["login_id"], od=order_date,
@@ -2124,6 +2136,7 @@ def save_purchases(body: PurchaseSaveIn, u: dict = Depends(current_user)) -> dic
         name = it.product_name.strip()[:300]
         if not name:
             continue
+        smid = _own_media(it.source_media_id, u["login_id"], "receipt")
         tmid = _own_media(it.thumb_media_id, u["login_id"], "item_thumb")
         qty = max(1, it.quantity or 1)
         unit_krw = round(it.price_krw / qty, 0) if it.price_krw is not None else None

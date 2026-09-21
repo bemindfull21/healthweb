@@ -76,6 +76,25 @@ function nowLocalInput() {
   d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
   return d.toISOString().slice(0, 16);
 }
+function dedupeItems(items) {
+  // 상품명+옵션+수량+위안화금액이 모두 일치하면 중복 — 스크롤 캡처로 여러 장 찍을 때 겹치는 항목을 걸러내기 위함.
+  // price_cny 를 기준으로 삼는 건 이미지마다 환율이 갈릴 수 있는 price_krw보다 안정적이기 때문.
+  const seen = new Set();
+  const out = [];
+  let removed = 0;
+  for (const it of items) {
+    const key = [
+      (it.product_name || "").trim().toLowerCase().replace(/\s+/g, ""),
+      (it.option_text || "").trim().toLowerCase().replace(/\s+/g, ""),
+      Number(it.quantity) || 1,
+      it.price_cny === "" || it.price_cny == null ? "" : Number(it.price_cny),
+    ].join("|");
+    if (seen.has(key)) { removed++; continue; }
+    seen.add(key);
+    out.push(it);
+  }
+  return { items: out, removed };
+}
 function resizeImage(file, maxDim) {
   return new Promise((resolve, reject) => {
     const img = new Image();
@@ -1086,15 +1105,19 @@ function ErpView() {
   </div>`;
 }
 
+const ERP_MAX_RECEIPTS = 10;
+
 function ErpPurchaseView() {
   const { toast } = useStore();
-  const [receipt, setReceipt] = useState(null);
+  const [receipts, setReceipts] = useState([]);
   const [extracting, setExtracting] = useState(false);
+  const [progress, setProgress] = useState(null);
   const [draft, setDraft] = useState(null);
   const [orderDate, setOrderDate] = useState("");
   const [saving, setSaving] = useState(false);
   const [list, setList] = useState(null);
   const [totals, setTotals] = useState({ krw: 0, cny: 0 });
+  const fileInp = useRef(null);
 
   const today = new Date();
   today.setMinutes(today.getMinutes() - today.getTimezoneOffset());
@@ -1105,7 +1128,7 @@ function ErpPurchaseView() {
   const [dateTo, setDateTo] = useState(todayStr);
   const [unreceivedOnly, setUnreceivedOnly] = useState(false);
 
-  const emptyRow = () => ({ shop_name: "", product_name: "", option_text: "", quantity: 1, price_cny: "", price_krw: "", thumb_media_id: null, thumb_url: null });
+  const emptyRow = () => ({ shop_name: "", product_name: "", option_text: "", quantity: 1, price_cny: "", price_krw: "", thumb_media_id: null, thumb_url: null, source_media_id: null });
 
   const load = useCallback(async () => {
     try {
@@ -1144,19 +1167,68 @@ function ErpPurchaseView() {
     }
   };
 
-  const onReceipt = async (media) => {
-    setReceipt(media);
-    if (!media) { setDraft(null); return; }
+  const pickFiles = async (e) => {
+    const files = Array.from(e.target.files || []);
+    e.target.value = "";
+    if (!files.length) return;
+    if (files.some((f) => !/^image\/(jpeg|png|webp)$/.test(f.type))) {
+      return toast("JPEG · PNG · WebP만 올릴 수 있어요", "err");
+    }
+    const room = ERP_MAX_RECEIPTS - receipts.length;
+    if (room <= 0) return toast(`스크린샷은 최대 ${ERP_MAX_RECEIPTS}장까지 올릴 수 있어요`, "err");
+    const picked = files.slice(0, room);
+    if (files.length > picked.length) {
+      toast(`한 번에 최대 ${ERP_MAX_RECEIPTS}장까지 올릴 수 있어 앞 ${picked.length}장만 처리해요`, "err");
+    }
+
     setExtracting(true);
-    try {
-      const r = await api("/purchases/extract", { method: "POST", body: { media_id: media.id } });
-      setDraft(r.items && r.items.length ? r.items.map((it) => ({
-        shop_name: it.shop_name || "", product_name: it.product_name || "", option_text: it.option_text || "",
-        quantity: it.quantity || 1, price_cny: it.price_cny ?? "", price_krw: it.price_krw ?? "",
-        thumb_media_id: it.thumb_media_id || null, thumb_url: it.thumb_url || null,
-      })) : [emptyRow()]);
-    } catch (e) { toast(e.detail, "err"); setDraft([emptyRow()]); }
-    finally { setExtracting(false); }
+    const uploadedMedia = [];
+    const collected = [];
+    let failMsg = null;
+    for (let i = 0; i < picked.length; i++) {
+      setProgress({ done: i, total: picked.length });
+      try {
+        const blob = await resizeImage(picked[i], 1600);
+        const fd = new FormData();
+        fd.append("file", blob, "upload.jpg");
+        fd.append("kind", "receipt");
+        const res = await fetch(API + "/media", {
+          method: "POST", headers: { Authorization: "Bearer " + token() }, body: fd,
+        });
+        const media = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(media.detail || "업로드에 실패했어요");
+        uploadedMedia.push(media);
+        const r = await api("/purchases/extract", { method: "POST", body: { media_id: media.id } });
+        for (const it of (r.items || [])) {
+          collected.push({
+            shop_name: it.shop_name || "", product_name: it.product_name || "", option_text: it.option_text || "",
+            quantity: it.quantity || 1, price_cny: it.price_cny ?? "", price_krw: it.price_krw ?? "",
+            thumb_media_id: it.thumb_media_id || null, thumb_url: it.thumb_url || null,
+            source_media_id: media.id,
+          });
+        }
+      } catch (err) {
+        failMsg = err.message || err.detail || "분석 중 오류가 발생했어요";
+        break;
+      }
+    }
+    setExtracting(false);
+    setProgress(null);
+    if (failMsg) toast(`${failMsg} (${uploadedMedia.length}/${picked.length}장까지 처리됨)`, "err");
+    if (!uploadedMedia.length) return;
+
+    setReceipts((rs) => [...rs, ...uploadedMedia]);
+    const existing = draft || [];
+    const manual = existing.filter((r) => !r.source_media_id);
+    const fromReceipts = existing.filter((r) => r.source_media_id).concat(collected);
+    const { items: deduped, removed } = dedupeItems(fromReceipts);
+    setDraft(deduped.length || manual.length ? [...deduped, ...manual] : [emptyRow()]);
+    if (removed > 0) toast(`중복 상품 ${removed}건은 자동으로 제외했어요`);
+  };
+
+  const rmReceipt = (mid) => {
+    setReceipts((rs) => rs.filter((m) => m.id !== mid));
+    setDraft((d) => (d || []).filter((r) => r.source_media_id !== mid));
   };
 
   const updRow = (i, k, v) => setDraft((d) => d.map((row, idx) => (idx === i ? { ...row, [k]: v } : row)));
@@ -1180,13 +1252,13 @@ function ErpPurchaseView() {
             price_cny: r.price_cny === "" ? null : Number(r.price_cny),
             price_krw: r.price_krw === "" ? null : Number(r.price_krw),
             thumb_media_id: r.thumb_media_id || null,
+            source_media_id: r.source_media_id || null,
           })),
           order_date: orderDate,
-          source_media_id: receipt ? receipt.id : null,
         },
       });
       toast("저장했습니다");
-      setReceipt(null); setDraft(null); setOrderDate("");
+      setReceipts([]); setDraft(null); setOrderDate("");
       load();
     } catch (e) { toast(e.detail, "err"); }
     finally { setSaving(false); }
@@ -1200,9 +1272,19 @@ function ErpPurchaseView() {
 
   return html`<div>
     <div class="panel">
-      <p class="muted sm">주문 내역 스크린샷을 올리면 AI가 상품·가격을 읽어줘요.</p>
-      <${ImageUpload} kind="receipt" value=${receipt} onChange=${onReceipt} label="스크린샷 올리기" />
-      ${extracting && html`<p class="muted sm">읽는 중…</p>`}
+      <p class="muted sm">주문 내역 스크린샷을 올리면 AI가 상품·가격을 읽어줘요. 최대 ${ERP_MAX_RECEIPTS}장까지 한 번에 올릴 수 있고,
+        스크롤 캡처로 겹치는 상품은 자동으로 걸러줘요.</p>
+      ${receipts.length > 0 && html`<div class="erp-receipts">
+        ${receipts.map((m) => html`<div class="erp-receipt" key=${m.id}>
+          <img src=${m.thumb_url || m.url} alt="" />
+          <button type="button" class="iu-x" onClick=${() => rmReceipt(m.id)} aria-label="이미지 제거">✕</button>
+        </div>`)}
+      </div>`}
+      <button type="button" class="iu-btn" disabled=${extracting || receipts.length >= ERP_MAX_RECEIPTS}
+        onClick=${() => fileInp.current.click()}>
+        ${extracting ? `분석 중… (${progress ? progress.done : 0}/${progress ? progress.total : 0})` : "📷 스크린샷 올리기"}
+      </button>
+      <input ref=${fileInp} type="file" accept="image/jpeg,image/png,image/webp" multiple hidden onChange=${pickFiles} />
     </div>
 
     ${draft && html`<div class="panel">

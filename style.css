@@ -532,6 +532,10 @@ img.avatar { object-fit: cover; display: block; }
   flex-shrink: 0; background: var(--card-2); display: block;
 }
 .erp-thumb-empty { border: 1px dashed var(--border); }
+.erp-receipts { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+.erp-receipt { position: relative; }
+.erp-receipt img { width: 52px; height: 52px; border-radius: 8px; object-fit: cover; display: block; background: var(--card-2); }
+.erp-receipt .iu-x { width: 20px; height: 20px; font-size: .68rem; top: -6px; right: -6px; }
 .erp-total { text-align: center; font-weight: 700; margin-bottom: 16px; }
 .erp-item {
   display: flex; gap: 10px; align-items: center;

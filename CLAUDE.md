@@ -36,8 +36,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   폰트 없이 폴리라인으로 M 그림)로 생성 — 색·모양 바꾸면 `api/venv/Scripts/python.exe scripts/make_icons.py` 재실행.
   `manifest.json`(`display:standalone`) + 4개 HTML 전부에 `apple-touch-icon`·`manifest`·`theme-color` 링크.
 - **캐시버스터**: `app.js`·`style.css`·`config.js`·`landing.js`도 아이콘과 동일하게 참조하는 HTML(`app.html`·`index.html`·`challenge.html`·
-  `about.html`·`install-guide.html`)에서 `?v=N`로 부른다(2026-09-12 도입, 파일별로 따로 버전 관리 — 현재 `app.js`는 `v=13`,
-  `style.css`는 `v=11`, `config.js`/`landing.js`는 `v=1`). Fastly CDN이 `max-age=600`이라 버전을 안 올리면
+  `about.html`·`install-guide.html`)에서 `?v=N`로 부른다(2026-09-12 도입, 파일별로 따로 버전 관리 — 현재 `app.js`는 `v=14`,
+  `style.css`는 `v=12`, `config.js`/`landing.js`는 `v=1`). Fastly CDN이 `max-age=600`이라 버전을 안 올리면
   배포해도 사용자는 최대 10분 넘게 옛 코드를 봄 — **네 파일 중 하나라도 고치면 참조하는 모든 HTML의 그 파일 `?v=`를 함께 올릴 것.**
   "고쳤는데 반영이 안 됐다"는 신고가 오면 `curl -s https://bemindfull21.github.io/healthweb/app.js | grep <문자열>`로 배포된 코드부터 확인.
 - 로컬 테스트: `app.js`의 `const API` + `config.js`의 `window.HW.API` 를 `http://127.0.0.1:8971`로 `sed` (테스트 후 `git checkout config.js` + 역치환). 정적은 `python -m http.server 8080`.
@@ -215,7 +215,17 @@ CSS: `--rank-1~5`/`--rank-N-soft` 토큰(라이트/다크) + `.rank-badge`, 다�
 커뮤니티 핵심 기능과 무관한 **오너 지정 개인 유틸리티** — 오너가 `ProfileView` ⋯메뉴에서 사용자별로 `erp_access` 켜고 끔.
 탭바는 `me.erp_access` 가 true 인 사용자에게만 6번째 "ERP" 탭 노출(`.tabbar-6`), 나머지는 기존 5개.
 프론트: `ErpView`(`app.js`) — 상단 서브메뉴 "구매/비용/재고/판매/손익"(`.seg`, 5개 전부 구현·배포됨).
-`ErpPurchaseView` = 영수증 업로드(`ImageUpload kind="receipt"`) → `/purchases/extract` 호출 → 추출 결과 편집 가능한 표
+`ErpPurchaseView` = 영수증 업로드(전용 다중 업로드 UI, `ImageUpload` 재사용 안 함 — 최대 `ERP_MAX_RECEIPTS`(10)장,
+`<input multiple>`로 한 번에 선택하거나 여러 번 나눠 추가 가능, 올린 이미지는 썸네일 스트립(`.erp-receipts`)으로 표시하고
+개별 제거 가능) → 이미지마다 순차로 `POST /media` + `POST /purchases/extract` 호출(진행 상태 "분석 중… (N/M)" 버튼 라벨 표시,
+Gemini 무료 쿼터가 전 프로젝트 공유라 동시 호출 대신 순차 처리 — 중간에 실패하면 그때까지 처리된 이미지 결과는 살리고 토스트로
+안내) → 이미지별 결과를 하나의 draft로 병합하며 **중복 자동 제외**(`dedupeItems()`, `app.js`) — 상품명+옵션+수량+`price_cny`가
+모두 일치하면 중복으로 보고 목록에서 완전히 숨김(스크롤 캡처로 여러 장 찍을 때 겹치는 항목을 거르기 위함, `price_krw` 대신
+`price_cny`로 비교하는 이유는 환율이 이미지마다 갈릴 수 있어서 — 서버도 `_fx_cny_to_krw()`에 10분 캐시를 둬서 이중 안전).
+자동 dedup이 놓친 중복은 기존 행별 ✕ 삭제로 수동 제외 가능. 각 draft 행은 자신을 추출한 이미지의 media id를
+`source_media_id`로 갖고 저장 시 `POST /purchases`의 `items[].source_media_id`로 개별 전송(이전엔 배치 전체에 하나만
+적용했으나 다중 이미지 지원을 위해 item 단위로 변경, 2026-09-21). 이미지 다건 처리로 `/purchases/extract` 레이트리밋도
+10/hour → 60/hour로 상향(2026-09-21). → 추출 결과 편집 가능한 표
 (사진 썸네일·상점·상품명·옵션·수량·¥·₩) → **주문일 입력(필수, 미입력 시 저장 버튼 비활성 + 서버도 400)** → 저장 → 조회 필터
 (시작일·종료일, 기본값 최근 7일 — 프론트가 로컬 타임존 기준으로 계산해 채움 · "미입고만 보기" 체크 시 기간 무시하고 `received=0`인
 항목 전체) → 누적 목록(₩/¥ 합계는 현재 필터 기준, 각 항목에 **구매ID**(₩ 금액 바로 위에 표시, 주문일자 대신)·**수량 입력칸**

@@ -110,10 +110,10 @@ r = call("POST", "/purchases", {
         {"shop_name": extracted["shop_name"], "product_name": extracted["product_name"],
          "option_text": extracted["option_text"], "quantity": extracted["quantity"],
          "price_cny": extracted["price_cny"], "price_krw": extracted["price_krw"],
-         "thumb_media_id": thumb_mid},
+         "thumb_media_id": thumb_mid, "source_media_id": mid},
         {"shop_name": None, "product_name": "케이스", "quantity": 1, "price_cny": 15, "price_krw": None},
     ],
-    "order_date": "2026-09-10", "source_media_id": mid,
+    "order_date": "2026-09-10",
 }, token=tok_u)
 show("save", r); assert r[0] == 200 and len(r[1]["ids"]) == 2
 ids = r[1]["ids"]  # ids[0] = 썸네일 있는 항목, ids[1] = 케이스
