@@ -297,6 +297,32 @@ td.q { white-space: normal; color: var(--muted); font-size: .84rem; min-width: 1
 .sheet button { background: var(--card-2); color: var(--text); }
 .sheet button.cancel { background: transparent; color: var(--muted); border: 1px solid var(--border); }
 
+/* 오늘 체크 — 참여 챌린지 × 최근 7일 표 */
+.wk-wrap { overflow-x: auto; margin: 0 -4px; }
+.wk { width: 100%; min-width: 290px; table-layout: fixed; border-collapse: collapse; }
+.wk th, .wk td { padding: 0; text-align: center; vertical-align: middle; font-weight: 400; }
+.wk thead th { font-size: .7rem; color: var(--muted); line-height: 1.25; padding: 4px 0; }
+.wk thead th:not(.wk-title) { width: 32px; }
+.wk .wk-md, .wk .wk-dow { display: block; }
+.wk .today { background: var(--accent-soft); }
+.wk thead th.today { color: var(--accent); font-weight: 700; border-radius: 8px 8px 0 0; }
+.wk tbody tr:last-child td.today { border-radius: 0 0 8px 8px; }
+.wk .wk-title { text-align: left; }
+.wk .wk-title button {
+  background: transparent; color: var(--text); padding: 6px 6px 6px 2px; font-weight: 600; font-size: .85rem;
+  width: 100%; display: block; text-align: left;
+}
+.wk .wk-name { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wk .wk-prog { display: block; font-size: .72rem; font-weight: 400; color: var(--muted); }
+.wk-cell {
+  width: 28px; height: 28px; padding: 0; margin: 4px auto; display: block;
+  border-radius: 50%; background: transparent; border: 1.5px solid var(--border);
+  color: #fff; font-size: .85rem; line-height: 1;
+}
+.wk-cell.on { background: var(--accent); border-color: var(--accent); }
+.wk td.today .wk-cell:not(.on) { border-color: var(--accent); }
+.wk-hint { margin: 10px 0 0; text-align: center; }
+
 .toast {
   position: fixed; left: 50%; bottom: 84px; transform: translateX(-50%);
   z-index: 200; background: var(--text); color: var(--bg);

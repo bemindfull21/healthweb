@@ -28,7 +28,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - 로그인/가입 → JWT를 `localStorage["healthweb.token"]` → `app.html`. `401` → 토큰 삭제 후 랜딩.
 - 라우트: `/feed` · `/challenges`·`/challenges/:id` · `/notifications` · `/me` · `/search` · `/p/:id` · `/u/:handle` · `/settings` · `/admin`(오너 허브)·`/admin/reports`·`/admin/announcements`.
   공개(로그인 불필요): `about.html` · `challenge.html?id=`.
-- 탭바 5개: 피드 · 챌린지 · ＋ · 알림 · 나 (`erp_access` 사용자는 ERP 탭 추가로 6개). ＋ = 액션 시트(몸무게 기록 / 글쓰기 / 챌린지 만들기).
+- 탭바 5개: 피드 · 챌린지 · ＋ · 알림 · 나. ＋ = 액션 시트(**오늘 체크** / 몸무게 기록 / 글쓰기 / 챌린지 만들기).
+- **오늘 체크**(`CheckinModal`, 2026-10-01): 참여 챌린지 × 오늘 포함 최근 7일 표, 칸 탭 = 즉시 체크/해제(optimistic+rollback, 저장 버튼 없음). `GET /challenges/mine/week?end=<로컬 오늘>` 한 번으로 로드.
 - **브랜드**: `favicon.svg`(결의 하트, 고정 hex — CSS 변수 미사용) 전 페이지 `<link rel="icon">`. `--love`(rose, style.css 라이트/다크)
   + 기존 `--accent`(green) 두 색으로 "마이웨이트"/"마이러브" 분리 표기. `.wordmark`(랜딩 히어로, Gowun Batang·Fraunces 구글 폰트)
   · `.brand-sig`(소개 페이지 하단 서명, 작은 하트+이름). in-app 화면엔 로고 반복 안 함("문 앞에서만" 원칙).
@@ -36,8 +37,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   폰트 없이 폴리라인으로 M 그림)로 생성 — 색·모양 바꾸면 `api/venv/Scripts/python.exe scripts/make_icons.py` 재실행.
   `manifest.json`(`display:standalone`) + 4개 HTML 전부에 `apple-touch-icon`·`manifest`·`theme-color` 링크.
 - **캐시버스터**: `app.js`·`style.css`·`config.js`·`landing.js`도 아이콘과 동일하게 참조하는 HTML(`app.html`·`index.html`·`challenge.html`·
-  `about.html`·`install-guide.html`)에서 `?v=N`로 부른다(2026-09-12 도입, 파일별로 따로 버전 관리 — 현재 `app.js`는 `v=14`,
-  `style.css`는 `v=12`, `config.js`/`landing.js`는 `v=1`). Fastly CDN이 `max-age=600`이라 버전을 안 올리면
+  `about.html`·`install-guide.html`)에서 `?v=N`로 부른다(2026-09-12 도입, 파일별로 따로 버전 관리 — 현재 `app.js`는 `v=15`,
+  `style.css`는 `v=13`, `config.js`/`landing.js`는 `v=1`). Fastly CDN이 `max-age=600`이라 버전을 안 올리면
   배포해도 사용자는 최대 10분 넘게 옛 코드를 봄 — **네 파일 중 하나라도 고치면 참조하는 모든 HTML의 그 파일 `?v=`를 함께 올릴 것.**
   "고쳤는데 반영이 안 됐다"는 신고가 오면 `curl -s https://bemindfull21.github.io/healthweb/app.js | grep <문자열>`로 배포된 코드부터 확인.
 - 로컬 테스트: `app.js`의 `const API` + `config.js`의 `window.HW.API` 를 `http://127.0.0.1:8971`로 `sed` (테스트 후 `git checkout config.js` + 역치환). 정적은 `python -m http.server 8080`.
@@ -54,7 +55,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | 몸무게 | `GET/POST /weights` · `DELETE /weights/:id` (연결 글은 링크만 끊음) |
 | 커뮤니티 | `GET /feed?scope=following|all&cursor=` · `POST /posts` · `GET /posts/:id` · `PATCH /posts/:id`(`{body, kind?}`, 본인 글만) · `POST/DELETE /posts/:id/encourage` · `POST /posts/:id/comments` · `DELETE /posts/:id` · `GET /u/:handle` |
 | 팔로우 (P2) | `POST/DELETE /u/:handle/follow` · `GET /u/:handle/{followers|following}` |
-| 챌린지 (P2) | `GET/POST /challenges` · `GET /challenges/:id` · `POST /challenges/:id/join` · `DELETE .../leave` · `POST .../checkin` (`{date}`) · `DELETE .../checkin/:date` |
+| 챌린지 (P2) | `GET/POST /challenges` · `GET /challenges/mine/week?end=` (참여 챌린지 + end 포함 7일 `checked`·전체 `done`) · `GET /challenges/:id` · `POST /challenges/:id/join` · `DELETE .../leave` · `POST .../checkin` (`{date}`, **UTC 오늘 −8일 ~ +1일만 허용** — 로컬 날짜 시차 여유 포함 최근 7일, 몰아서 체크해 등급 부풀리기 방지) · `DELETE .../checkin/:date` |
 | 알림 (P2) | `GET /notifications?cursor=` · `GET /notifications/unread-count` · `POST /notifications/read` |
 | 검색·차단 (P3a) | `GET /search?q=` → `{users,challenges,posts}` (LIKE, 각 12개) · `POST/DELETE /u/:handle/block` |
 | 공개 (P3a) | `GET /c/:id` — **로그인 불필요**. 챌린지 공개 정보 + `member_count`·`active_this_week`·`sample_members` |
@@ -211,7 +212,11 @@ null` 전송)이고, 옵션 목록도 상품명 없이 `purchase_no`만 보여�
 `NotificationsView` 는 `kind==='rank'` 항목을 "🎉 {뱃지} 등급이 되었어요"로 특수 렌더, 클릭 시 `/me`.
 CSS: `--rank-1~5`/`--rank-N-soft` 토큰(라이트/다크) + `.rank-badge`, 다이아몬드만 그라디언트+보더로 차별화.
 
-## ERP 구매·비용·재고·판매·손익 (2026-09-12~13) — 구현·배포됨
+## ERP 구매·비용·재고·판매·손익 (2026-09-12~13) — **2026-10-01 메뉴에서 제거**
+
+> ERP는 `ably_ranking`(마라탕)으로 분리됨. health-web 에선 ERP 탭·`/erp` 라우트·프로필 ⋯메뉴 "ERP 권한" 토글만 제거했고,
+> `ErpView` 등 프론트 코드와 API·DB 테이블은 아직 남아 있음(진입 경로 없음). 완전 삭제는 별도 작업.
+
 
 타오바오 등 주문내역 스크린샷 → Gemini 비전으로 상품·위안화 가격 자동 추출 → 위안화+원화(무료 환율 API, `open.er-api.com`) 저장.
 커뮤니티 핵심 기능과 무관한 **오너 지정 개인 유틸리티** — 오너가 `ProfileView` ⋯메뉴에서 사용자별로 `erp_access` 켜고 끔.

@@ -1,5 +1,5 @@
 import { h, render, createContext } from "https://esm.sh/preact@10.24.3";
-import { useState, useEffect, useRef, useCallback, useContext } from "https://esm.sh/preact@10.24.3/hooks";
+import { useState, useEffect, useRef, useCallback, useContext, useMemo } from "https://esm.sh/preact@10.24.3/hooks";
 import htm from "https://esm.sh/htm@3.1.1";
 
 const html = htm.bind(h);
@@ -154,14 +154,13 @@ function TopBar({ title, onBack }) {
 }
 
 function TabBar() {
-  const { route, nav, openSheet, bump, unread, me } = useStore();
+  const { route, nav, openSheet, bump, unread } = useStore();
   const on = (r) =>
     route === r ||
     (r === "/feed" && route.startsWith("/p/")) ||
     (r === "/challenges" && route.startsWith("/challenges"));
   const go = (r) => () => (route === r ? bump() : nav(r)); // 현재 탭 다시 누르면 새로고침
-  const erp = me && me.erp_access;
-  return html`<nav class=${"tabbar " + (erp ? "tabbar-6" : "tabbar-5")}>
+  return html`<nav class="tabbar tabbar-5">
     <button class=${on("/feed") ? "on" : ""} onClick=${go("/feed")}>피드</button>
     <button class=${on("/challenges") ? "on" : ""} onClick=${go("/challenges")}>챌린지</button>
     <button class="plus" onClick=${openSheet} aria-label="추가">＋</button>
@@ -169,7 +168,6 @@ function TabBar() {
       알림${unread > 0 && html`<span class="badge">${unread > 9 ? "9+" : unread}</span>`}
     </button>
     <button class=${route === "/me" ? "on" : ""} onClick=${go("/me")}>나</button>
-    ${erp && html`<button class=${on("/erp") ? "on" : ""} onClick=${go("/erp")}>ERP</button>`}
   </nav>`;
 }
 
@@ -725,15 +723,6 @@ function ProfileView({ handle }) {
       toast("신고를 접수했습니다");
     } catch (e) { toast(e.detail, "err"); }
   };
-  const toggleErp = async () => {
-    setMenu(false);
-    const next = !p.erp_access;
-    try {
-      await api(`/admin/users/${encodeURIComponent(handle)}/erp-access`, { method: "PATCH", body: { erp_access: next } });
-      toast(next ? "ERP 권한을 줬습니다" : "ERP 권한을 뺐습니다");
-      load();
-    } catch (e) { toast(e.detail, "err"); }
-  };
 
   if (state === "loading") return html`<${Spinner} />`;
   if (state === "gone") return html`<div class="view"><${ErrorBox} msg="없는 사용자입니다" /></div>`;
@@ -764,7 +753,6 @@ function ProfileView({ handle }) {
             <button class="icon-btn" onClick=${() => setMenu(!menu)} aria-label="더보기">⋯</button>
             ${menu && html`<div class="menu-pop">
               <button class="plain" onClick=${report}>신고</button>
-              ${me && me.is_owner && html`<button class="plain" onClick=${toggleErp}>${p.erp_access ? "ERP 권한 해제" : "ERP 권한 부여"}</button>`}
               <button onClick=${block}>차단</button>
             </div>`}
           </div>`}
@@ -1999,9 +1987,96 @@ function ChallengeModal({ onClose }) {
   <//>`;
 }
 
+const WEEKDAY = ["일", "월", "화", "수", "목", "금", "토"];
+
+function CheckinModal({ onClose }) {
+  const { bump, toast, nav } = useStore();
+  const [data, setData] = useState(null);
+  const [state, setState] = useState("loading");
+  const [pending, setPending] = useState({}); // "cid|date" → true (저장 중)
+  // 사용자 로컬 날짜 기준 오늘 포함 최근 7일 (오래된 → 오늘)
+  const days = useMemo(() => {
+    const out = [];
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date();
+      d.setDate(d.getDate() - i);
+      d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+      out.push({ ymd: d.toISOString().slice(0, 10), dow: d.getUTCDay(), md: `${d.getUTCMonth() + 1}/${d.getUTCDate()}` });
+    }
+    return out;
+  }, []);
+  const todayStr = days[6].ymd;
+
+  const load = useCallback(async () => {
+    try { setData(await api(`/challenges/mine/week?end=${todayStr}`)); setState("ok"); }
+    catch { setState("err"); }
+  }, [todayStr]);
+  useEffect(() => { load(); }, [load]);
+
+  // 한 칸만 바꾸는 함수형 업데이트 — 같은 줄 연속 탭에도 서로 덮어쓰지 않음
+  const setCell = (cid, ymd, on, doneDelta) => setData((d) => ({
+    ...d, items: d.items.map((x) => (x.id !== cid ? x : {
+      ...x,
+      checked: on ? [...x.checked.filter((v) => v !== ymd), ymd] : x.checked.filter((v) => v !== ymd),
+      done: x.done + doneDelta,
+    })),
+  }));
+  const toggle = async (c, ymd) => {
+    const key = `${c.id}|${ymd}`;
+    if (pending[key]) return;
+    const was = c.checked.includes(ymd);
+    setCell(c.id, ymd, !was, was ? -1 : 1); // optimistic — 실패 시 원복
+    setPending((p) => ({ ...p, [key]: true }));
+    try {
+      if (was) await api(`/challenges/${c.id}/checkin/${ymd}`, { method: "DELETE" });
+      else await api(`/challenges/${c.id}/checkin`, { method: "POST", body: { date: ymd } });
+      bump();
+    } catch (e) {
+      setCell(c.id, ymd, was, was ? 1 : -1);
+      toast(e.detail || "저장하지 못했습니다", "err");
+    } finally {
+      setPending((p) => { const n = { ...p }; delete n[key]; return n; });
+    }
+  };
+
+  let body;
+  if (state === "loading") body = html`<${Spinner} />`;
+  else if (state === "err") body = html`<${ErrorBox} msg="불러오지 못했습니다" onRetry=${load} />`;
+  else if (data.items.length === 0) body = html`<div class="empty">
+      참여 중인 챌린지가 없어요.
+      <button onClick=${() => { onClose(); nav("/challenges"); }}>챌린지 둘러보기</button>
+    </div>`;
+  else body = html`<div class="wk-wrap"><table class="wk">
+      <thead><tr>
+        <th class="wk-title"></th>
+        ${days.map((d) => html`<th class=${d.ymd === todayStr ? "today" : ""} key=${d.ymd}>
+          <span class="wk-md">${d.md}</span><span class="wk-dow">${d.ymd === todayStr ? "오늘" : WEEKDAY[d.dow]}</span>
+        </th>`)}
+      </tr></thead>
+      <tbody>${data.items.map((c) => html`<tr key=${c.id}>
+        <th class="wk-title"><button class="plain" title=${c.title}
+          onClick=${() => { onClose(); nav(`/challenges/${c.id}`); }}>
+          <span class="wk-name">${c.title}</span><span class="wk-prog">${c.done}/${c.target_days}일</span>
+        </button></th>
+        ${days.map((d) => {
+          const on = c.checked.includes(d.ymd);
+          return html`<td class=${d.ymd === todayStr ? "today" : ""} key=${d.ymd}>
+            <button class=${"wk-cell" + (on ? " on" : "")} aria-pressed=${on}
+              aria-label=${`${c.title} ${d.md} ${on ? "체크 해제" : "체크"}`}
+              onClick=${() => toggle(c, d.ymd)}>${on ? "✓" : ""}</button>
+          </td>`;
+        })}
+      </tr>`)}</tbody>
+    </table></div>
+    <p class="muted sm wk-hint">칸을 누르면 바로 저장돼요 · 최근 7일까지</p>`;
+
+  return html`<${Modal} title="오늘 체크" onClose=${onClose}>${body}<//>`;
+}
+
 function ActionSheet({ onClose, pick }) {
   return html`<div class="modal-back" onClick=${onClose}>
     <div class="sheet" onClick=${(e) => e.stopPropagation()}>
+      <button onClick=${() => pick("checkin")}>오늘 체크</button>
       <button onClick=${() => pick("weight")}>몸무게 기록</button>
       <button onClick=${() => pick("post")}>글쓰기</button>
       <button onClick=${() => pick("challenge")}>챌린지 만들기</button>
@@ -2015,7 +2090,7 @@ function App() {
   const { route, nav } = useRoute();
   const [me, setMe] = useState(() => { try { return JSON.parse(localStorage.getItem(ME_KEY) || "null"); } catch { return null; } });
   const [toastState, setToastState] = useState(null);
-  const [modal, setModal] = useState(null); // 'weight' | 'post' | 'challenge' | 'sheet' | null
+  const [modal, setModal] = useState(null); // 'weight' | 'post' | 'challenge' | 'checkin' | 'sheet' | null
   const [bumpKey, setBumpKey] = useState(0);
   const [unread, setUnread] = useState(0);
   const toastTimer = useRef(null);
@@ -2061,7 +2136,6 @@ function App() {
   else if (cm) { view = html`<${ChallengeView} id=${cm[1]} />`; title = "챌린지"; back = () => nav("/challenges"); }
   else if (route === "/notifications") { view = html`<${NotificationsView} />`; title = "알림"; }
   else if (route === "/me") { view = html`<${MeView} />`; title = "나"; }
-  else if (route === "/erp") { view = html`<${ErpView} />`; title = "ERP"; }
   else if (route === "/search") { view = html`<${SearchView} />`; title = "검색"; back = () => history.back(); }
   else if (route === "/admin") { view = html`<${AdminHubView} />`; title = "관리자"; back = () => nav("/settings"); }
   else if (route === "/admin/reports") { view = html`<${AdminReportsView} />`; title = "신고 관리"; back = () => nav("/admin"); }
@@ -2085,6 +2159,7 @@ function App() {
       ${modal === "weight" && html`<${WeightModal} onClose=${close} />`}
       ${modal === "post" && html`<${PostModal} onClose=${close} />`}
       ${modal === "challenge" && html`<${ChallengeModal} onClose=${close} />`}
+      ${modal === "checkin" && html`<${CheckinModal} onClose=${close} />`}
     </div>
   </${Store.Provider}>`;
 }

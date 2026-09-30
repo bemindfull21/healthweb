@@ -60,8 +60,11 @@ r = call("POST", "/challenges", {"title": "브리핑테스트", "target_days": 1
 show("challenge", r); assert r[0] == 200
 cid = r[1]["id"]
 today = dt.date.today()
-r = call("POST", f"/challenges/{cid}/checkin", {"date": (today - dt.timedelta(days=11)).strftime("%Y-%m-%d")}, token=tok)
-assert r[0] == 200  # 기간 밖 체크인
+# 기간 밖 체크인 — API 는 최근 7일만 받으므로 DB 에 직접 넣는다
+_c = _db_connect(); _c.cursor().execute(
+    "insert into healthweb.challenge_checkin (challenge_id, login_id, check_date) values (:c, :l, :d)",
+    c=cid, l=U[0], d=(today - dt.timedelta(days=11)).strftime("%Y-%m-%d"))
+_c.commit(); _c.close()
 r = call("POST", f"/challenges/{cid}/checkin", {"date": (today - dt.timedelta(days=3)).strftime("%Y-%m-%d")}, token=tok)
 assert r[0] == 200  # 기간 안 체크인
 r = call("POST", f"/challenges/{cid}/checkin", {"date": today.strftime("%Y-%m-%d")}, token=tok)

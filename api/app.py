@@ -1484,6 +1484,37 @@ def list_challenges(u: dict = Depends(current_user)) -> dict:
     return {"items": out}
 
 
+@app.get("/challenges/mine/week")
+def my_challenges_week(end: str, u: dict = Depends(current_user)) -> dict:
+    """참여 챌린지 × end 포함 최근 7일 체크 여부 — '오늘 체크' 표용. end 는 사용자 로컬 날짜."""
+    end = end.strip()
+    if not DATE_RE.match(end):
+        raise HTTPException(400, "날짜 형식이 올바르지 않습니다")
+    start = (dt.datetime.strptime(end, "%Y-%m-%d").date() - dt.timedelta(days=6)).strftime("%Y-%m-%d")
+    rows = qall(
+        "select c.id, c.title, c.target_days, "
+        "(select count(*) from healthweb.challenge_checkin k "
+        "  where k.challenge_id = c.id and k.login_id = :me) done "
+        "from healthweb.challenge c join healthweb.challenge_member m "
+        "  on m.challenge_id = c.id and m.login_id = :me "
+        "order by m.joined_at, c.id",
+        me=u["login_id"],
+    )
+    checks = qall(
+        "select challenge_id, check_date from healthweb.challenge_checkin "
+        "where login_id = :me and check_date between :s and :e",
+        me=u["login_id"], s=start, e=end,
+    )
+    by: dict[int, list[str]] = {}
+    for r in checks:
+        by.setdefault(r["challenge_id"], []).append(r["check_date"])
+    return {"start": start, "end": end, "items": [
+        {"id": r["id"], "title": r["title"], "target_days": r["target_days"],
+         "done": r["done"], "checked": sorted(by.get(r["id"], []))}
+        for r in rows
+    ]}
+
+
 @app.post("/challenges")
 def create_challenge(body: ChallengeIn, u: dict = Depends(current_user)) -> dict:
     title = body.title.strip()
@@ -1564,6 +1595,12 @@ def checkin(cid: int, body: CheckinIn, u: dict = Depends(current_user)) -> dict:
     d = body.date.strip()
     if not DATE_RE.match(d):
         raise HTTPException(400, "날짜 형식이 올바르지 않습니다")
+    # 사용자 로컬 날짜라 UTC 기준 ±1일 시차 여유 — 최근 7일(오늘 포함)만 체크 가능
+    today = utcnow().date()
+    lo = (today - dt.timedelta(days=8)).strftime("%Y-%m-%d")
+    hi = (today + dt.timedelta(days=1)).strftime("%Y-%m-%d")
+    if not (lo <= d <= hi):
+        raise HTTPException(400, "최근 7일 안의 날짜만 체크할 수 있습니다")
     if q1("select 1 x from healthweb.challenge_member where challenge_id = :c and login_id = :l",
           c=cid, l=u["login_id"]) is None:
         raise HTTPException(400, "먼저 챌린지에 참여하세요")
