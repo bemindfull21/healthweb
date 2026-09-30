@@ -57,6 +57,7 @@ TG_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
 TG_BOT_USERNAME = os.environ.get("TELEGRAM_BOT_USERNAME", "health_trainer21_bot").strip().lstrip("@")
 WEB_APP_URL = os.environ.get("WEB_APP_URL", "https://bemindfull21.github.io/healthweb").rstrip("/")
 INTERNAL_KEY = os.environ.get("INTERNAL_KEY", "").strip()
+BRIEF_KEY = os.environ.get("BRIEF_KEY", "").strip()  # 주간 건강 브리핑 클라우드 루틴 전용, INTERNAL_KEY와 별개(최소권한)
 CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"  # 헷갈리는 글자 제외
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()  # _shared/secrets.env 공용, 다른 프로젝트와 쿼터 공유
 GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-flash-lite-latest")
@@ -1938,6 +1939,67 @@ def internal_tg_link(body: TgLinkIn, _: None = Depends(require_internal)) -> dic
 def internal_tg_unlink(body: TgUnlinkIn, _: None = Depends(require_internal)) -> dict:
     n = dml("update healthweb.app_user set tg_chat_id = null where tg_chat_id = :cid", cid=body.chat_id)
     return {"ok": True, "unlinked": n > 0}
+
+
+def require_brief(x_brief_key: str = Header(default="")) -> None:
+    if not BRIEF_KEY or x_brief_key != BRIEF_KEY:
+        raise HTTPException(401, "unauthorized")
+
+
+@app.get("/brief")
+def health_brief(login_id: str, days: int = 7, _: None = Depends(require_brief)) -> dict:
+    """주간 건강 브리핑 클라우드 루틴 전용 읽기 전용 엔드포인트. 몸무게·챌린지 원자료만 반환 —
+    코칭 톤 요약은 호출 측(클라우드 에이전트)이 만든다.
+    /internal/* 은 Caddy가 외부 차단(health-bot 전용, 127.0.0.1 호출)이라 이 엔드포인트는 일부러 그 밖에 둠 —
+    보호는 경로가 아니라 X-Brief-Key 로 함."""
+    lid = login_id.strip().lower()
+    user = q1("select target_weight from healthweb.app_user where login_id = :l", l=lid)
+    if user is None:
+        raise HTTPException(404, "없는 사용자입니다")
+    days = max(1, min(days, 90))
+    kst_now = dt.datetime.now(dt.timezone.utc) + dt.timedelta(hours=9)
+    cutoff_dt = kst_now.replace(tzinfo=None, microsecond=0) - dt.timedelta(days=days)
+    cutoff_date = cutoff_dt.strftime("%Y-%m-%d")
+
+    entries = qall(
+        "select to_char(logged_at,'YYYY-MM-DD') d, to_char(logged_at,'HH24:MI') t, weight, note "
+        "from healthweb.weight_entry where login_id = :l and logged_at >= :c order by logged_at asc",
+        l=lid, c=cutoff_dt,
+    )
+    prior = q1(
+        "select weight, to_char(logged_at,'YYYY-MM-DD') d from healthweb.weight_entry "
+        "where login_id = :l and logged_at < :c order by logged_at desc fetch first 1 rows only",
+        l=lid, c=cutoff_dt,
+    )
+    challenges = qall(
+        "select ch.title, ch.target_days, to_char(cm.joined_at,'YYYY-MM-DD') joined, "
+        "  (select count(*) from healthweb.challenge_checkin cc "
+        "   where cc.challenge_id = ch.id and cc.login_id = :l) total_checkins, "
+        "  (select count(*) from healthweb.challenge_checkin cc "
+        "   where cc.challenge_id = ch.id and cc.login_id = :l and cc.check_date >= :cd) recent_checkins "
+        "from healthweb.challenge_member cm join healthweb.challenge ch on ch.id = cm.challenge_id "
+        "where cm.login_id = :l",
+        l=lid, cd=cutoff_date,
+    )
+    return {
+        "login_id": lid,
+        "target_weight": float(user["target_weight"]) if user["target_weight"] is not None else None,
+        "window_days": days,
+        "window_from": cutoff_date,
+        "entries": [
+            {"date": r["d"], "time": r["t"], "weight": float(r["weight"]), "note": r["note"]}
+            for r in entries
+        ],
+        "prior_weight": float(prior["weight"]) if prior else None,
+        "prior_date": prior["d"] if prior else None,
+        "challenges": [
+            {
+                "title": r["title"], "target_days": r["target_days"], "joined_at": r["joined"],
+                "total_checkins": r["total_checkins"], "recent_checkins": r["recent_checkins"],
+            }
+            for r in challenges
+        ],
+    }
 
 
 # ---------- ERP (구매 기록, 오너가 지정한 사용자만) ----------

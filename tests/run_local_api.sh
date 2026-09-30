@@ -16,6 +16,6 @@ export ALLOW_ORIGIN='*'
 export MEDIA_DIR="$(cd "$(dirname "$0")" && pwd)/media"
 export MEDIA_BASE_URL='http://127.0.0.1:8971/media'
 export WEB_APP_URL='http://127.0.0.1:8080'
-# JWT_SECRET, OWNER_LOGIN_ID, TELEGRAM_BOT_TOKEN, INTERNAL_KEY 는 tests/.env 에서 옴
+# JWT_SECRET, OWNER_LOGIN_ID, TELEGRAM_BOT_TOKEN, INTERNAL_KEY, BRIEF_KEY 는 tests/.env 에서 옴
 
 exec ./venv/Scripts/python.exe -m uvicorn app:app --port 8971 --log-level warning
