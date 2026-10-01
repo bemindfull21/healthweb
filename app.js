@@ -796,25 +796,20 @@ function ProfileView({ handle }) {
 
 // ---------- 뷰: 챌린지 목록 ----------
 function ChallengesView() {
-  const { bumpKey, nav, openChallenge, me } = useStore();
+  const { bumpKey, nav, openChallenge } = useStore();
   const [items, setItems] = useState(null);
   const [state, setState] = useState("loading");
-  const owner = !!(me && me.is_owner);
-  const [showInactive, setShowInactive] = useShowInactive();
   useEffect(() => {
     setState("loading");
-    api(`/challenges${owner && showInactive ? "?include_inactive=true" : ""}`)
-      .then((d) => { setItems(d.items); setState("ok"); })
+    api("/challenges").then((d) => { setItems(d.items); setState("ok"); })
       .catch(() => setState("err"));
-  }, [bumpKey, owner, showInactive]);
+  }, [bumpKey]);
 
   if (state === "loading") return html`<${Spinner} />`;
   if (state === "err") return html`<${ErrorBox} msg="챌린지를 불러오지 못했습니다" />`;
 
   return html`<div class="view challenges">
     <button class="write-btn" onClick=${openChallenge}>＋ 챌린지 만들기</button>
-    ${owner && html`<label class="check owner-filter"><input type="checkbox" checked=${showInactive}
-      onChange=${(e) => setShowInactive(e.target.checked)} /> 비활성 챌린지도 보기 <span class="muted sm">(관리자)</span></label>`}
     ${items.length === 0
       ? html`<div class="empty">첫 챌린지를 만들어 보세요. 연속으로 지킬 루틴을요.</div>`
       : items.map((c) => html`
@@ -1742,7 +1737,7 @@ function AdminHubView() {
   </div>`;
 }
 
-// 오너 전용 "비활성 챌린지도 보기" — 챌린지 탭·챌린지 관리 공용, 기기별 저장
+// 오너 전용 "비활성 챌린지도 보기" (챌린지 관리), 기기별 저장
 const SHOW_INACTIVE_KEY = "healthweb.showInactive";
 function useShowInactive() {
   const [on, setOn] = useState(() => { try { return localStorage.getItem(SHOW_INACTIVE_KEY) === "1"; } catch { return false; } });

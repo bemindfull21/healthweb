@@ -37,8 +37,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   폰트 없이 폴리라인으로 M 그림)로 생성 — 색·모양 바꾸면 `api/venv/Scripts/python.exe scripts/make_icons.py` 재실행.
   `manifest.json`(`display:standalone`) + 4개 HTML 전부에 `apple-touch-icon`·`manifest`·`theme-color` 링크.
 - **캐시버스터**: `app.js`·`style.css`·`config.js`·`landing.js`도 아이콘과 동일하게 참조하는 HTML(`app.html`·`index.html`·`challenge.html`·
-  `about.html`·`install-guide.html`)에서 `?v=N`로 부른다(2026-09-12 도입, 파일별로 따로 버전 관리 — 현재 `app.js`는 `v=16`,
-  `style.css`는 `v=14`, `config.js`/`landing.js`는 `v=1`). Fastly CDN이 `max-age=600`이라 버전을 안 올리면
+  `about.html`·`install-guide.html`)에서 `?v=N`로 부른다(2026-09-12 도입, 파일별로 따로 버전 관리 — 현재 `app.js`는 `v=17`,
+  `style.css`는 `v=15`, `config.js`/`landing.js`는 `v=1`). Fastly CDN이 `max-age=600`이라 버전을 안 올리면
   배포해도 사용자는 최대 10분 넘게 옛 코드를 봄 — **네 파일 중 하나라도 고치면 참조하는 모든 HTML의 그 파일 `?v=`를 함께 올릴 것.**
   "고쳤는데 반영이 안 됐다"는 신고가 오면 `curl -s https://bemindfull21.github.io/healthweb/app.js | grep <문자열>`로 배포된 코드부터 확인.
 - 로컬 테스트: `app.js`의 `const API` + `config.js`의 `window.HW.API` 를 `http://127.0.0.1:8971`로 `sed` (테스트 후 `git checkout config.js` + 역치환). 정적은 `python -m http.server 8080`.
@@ -183,9 +183,10 @@ null` 전송)이고, 옵션 목록도 상품명 없이 `purchase_no`만 보여�
 **비활성 = 읽기 전용(A안, 2026-10-01)**: 목록(`GET /challenges`)·검색·`/challenges/mine/week`에서 숨김 — 단 **내가 참여한
 비활성 챌린지는 목록에 "종료" 배지로 남음**(기록 열람용). 참여·체크인·체크 해제는 `require_active_challenge()`가 400.
 상세 `GET /challenges/:id`·공개 `/c/:id`는 `is_active` 내려주고 프론트가 "종료된 챌린지" 안내. 기록·등급 점수는 보존.
-`GET /challenges?include_inactive=true`는 오너만 유효(비오너는 무시). 저활용 = 만든 지 `LOW_USAGE_DAYS`(14)일 지났고
-그 기간 체크 0 — **표시만, 비활성화는 수동**. 프론트: `AdminChallengesView` + 챌린지 탭의 오너 전용 "비활성 챌린지도 보기"
-체크박스(둘이 `localStorage["healthweb.showInactive"]` 공유, `useShowInactive()`).
+`GET /challenges?include_inactive=true`는 오너만 유효(비오너는 무시) — 현재 프론트는 안 씀(챌린지 탭의 오너 체크박스는
+2026-10-01 제거, 비활성 챌린지는 관리자 화면에서만 봄). 저활용 = 만든 지 `LOW_USAGE_DAYS`(14)일 지났고
+그 기간 체크 0 — **표시만, 비활성화는 수동**. 프론트: `AdminChallengesView`의 "비활성 챌린지도 보기" 체크박스
+(`localStorage["healthweb.showInactive"]`, `useShowInactive()`).
 
 ## VM 배포 (memo-agent)
 
