@@ -26,7 +26,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | `style.css` | 공통 |
 
 - 로그인/가입 → JWT를 `localStorage["healthweb.token"]` → `app.html`. `401` → 토큰 삭제 후 랜딩.
-- 라우트: `/feed` · `/challenges`·`/challenges/:id` · `/notifications` · `/me` · `/search` · `/p/:id` · `/u/:handle` · `/settings` · `/admin`(오너 허브)·`/admin/reports`·`/admin/announcements`.
+- 라우트: `/feed` · `/challenges`·`/challenges/:id` · `/notifications` · `/me` · `/search` · `/p/:id` · `/u/:handle` · `/settings` · `/admin`(오너 허브 — 진입은 "나" 헤더의 **관리자** 버튼, 미처리 신고 수 배지)·`/admin/reports`·`/admin/announcements`·`/admin/challenges`.
   공개(로그인 불필요): `about.html` · `challenge.html?id=`.
 - 탭바 5개: 피드 · 챌린지 · ＋ · 알림 · 나. ＋ = 액션 시트(**오늘 체크** / 몸무게 기록 / 글쓰기 / 챌린지 만들기).
 - **오늘 체크**(`CheckinModal`, 2026-10-01): 참여 챌린지 × 오늘 포함 최근 7일 표, 칸 탭 = 즉시 체크/해제(optimistic+rollback, 저장 버튼 없음). `GET /challenges/mine/week?end=<로컬 오늘>` 한 번으로 로드.
@@ -37,8 +37,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   폰트 없이 폴리라인으로 M 그림)로 생성 — 색·모양 바꾸면 `api/venv/Scripts/python.exe scripts/make_icons.py` 재실행.
   `manifest.json`(`display:standalone`) + 4개 HTML 전부에 `apple-touch-icon`·`manifest`·`theme-color` 링크.
 - **캐시버스터**: `app.js`·`style.css`·`config.js`·`landing.js`도 아이콘과 동일하게 참조하는 HTML(`app.html`·`index.html`·`challenge.html`·
-  `about.html`·`install-guide.html`)에서 `?v=N`로 부른다(2026-09-12 도입, 파일별로 따로 버전 관리 — 현재 `app.js`는 `v=15`,
-  `style.css`는 `v=13`, `config.js`/`landing.js`는 `v=1`). Fastly CDN이 `max-age=600`이라 버전을 안 올리면
+  `about.html`·`install-guide.html`)에서 `?v=N`로 부른다(2026-09-12 도입, 파일별로 따로 버전 관리 — 현재 `app.js`는 `v=16`,
+  `style.css`는 `v=14`, `config.js`/`landing.js`는 `v=1`). Fastly CDN이 `max-age=600`이라 버전을 안 올리면
   배포해도 사용자는 최대 10분 넘게 옛 코드를 봄 — **네 파일 중 하나라도 고치면 참조하는 모든 HTML의 그 파일 `?v=`를 함께 올릴 것.**
   "고쳤는데 반영이 안 됐다"는 신고가 오면 `curl -s https://bemindfull21.github.io/healthweb/app.js | grep <문자열>`로 배포된 코드부터 확인.
 - 로컬 테스트: `app.js`의 `const API` + `config.js`의 `window.HW.API` 를 `http://127.0.0.1:8971`로 `sed` (테스트 후 `git checkout config.js` + 역치환). 정적은 `python -m http.server 8080`.
@@ -63,6 +63,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | 신고 (P3b) | `POST /reports` (`{target_kind∈{post,comment,user},target_id,reason}`, user 는 이름으로) · `GET /admin/reports?status=` (오너 전용) · `POST /admin/reports/:id/resolve` (`{action: delete_post|delete_comment|none}`) |
 | 텔레그램 알림 (옵트인) | `POST /push/telegram/code` → `{code,deep_link}` (10분 · 일회용) · `GET/DELETE /push/telegram` · `POST /internal/telegram/{link,unlink}` (`X-Internal-Key`, 봇→API 로컬 호출) |
 | 주간 건강 브리핑 (클라우드 루틴 전용) | `GET /brief?login_id=&days=`(`X-Brief-Key`, 기본 7일·최대 90일) — 몸무게 기록+참여 챌린지 체크인수 원자료 반환(코칭 문구는 호출 측이 생성) |
+| 챌린지 관리 (오너) | `GET /admin/challenges?include_inactive=` (참여자·최근7일 활동자·마지막 체크·`low_usage`, 활용도 낮은 순) · `PATCH /admin/challenges/:id` (`{is_active}`) — 비활성화 시 참여자에게 `chal_end` 알림+텔레그램, 다시 활성화 시 안 읽은 `chal_end` 회수 |
 | 관리자 공지 | `GET/POST /admin/announcements` · `PATCH/DELETE /admin/announcements/:id` (오너 전용). `GET /notifications` 첫 페이지 응답에 `announcements`(활성 3개). `announcement`(title·body·link·starts_at·ends_at) 유효기간은 naive UTC, `_active_announcements()`. `parse_iso_utc()` 로 ISO(Z/offset/날짜만) → naive UTC |
 | 등급 (자기돌봄 습관) | `app_user.rank_level`(1~5)·`rank_score` — `/auth/me`·`GET /u/:handle`·`FEED_SQL`(글 작성자)에 노출. `_refresh_rank()` 를 `POST /weights`·`.../checkin` 성공 시 호출, 점수가 이전보다 클 때만 갱신(하락 없음). 등급 상승 시 `notification`(kind='rank', rank_level) + 텔레그램 |
 | ERP (구매 기록, 오너 지정 전용) | `PATCH /admin/users/:handle/erp-access`(`{erp_access}`, 오너 전용, handle=name) · `POST /purchases/extract`(`{media_id}` → Gemini 비전으로 상품명(한국어 번역)·수량·위안화 가격·상품 사진 위치(`box_2d`) 추출, CNY→KRW 환율 자동 계산, 사진은 서버가 원본에서 크롭해 `item_thumb` media 로 저장 후 `thumb_media_id`/`thumb_url` 반환) · `POST /purchases`(`{items[](thumb_media_id? 포함),order_date,source_media_id?}`, **order_date 필수** — 빈 값이면 400) · `GET /purchases?cursor=&date_from=&date_to=&unreceived_only=` (기본은 필터 없음 — 최근 7일 기본값은 프론트가 계산해서 전달, `unreceived_only=true`면 기간 무시하고 `received=0`만. `items`+`total_krw`+`total_cny`는 현재 필터 범위 기준, 각 item에 `thumb_url`·`received`) · `PATCH /purchases/:id`(`{received?,quantity?,is_listed?}`, 보낸 필드만 수정) · `DELETE /purchases/:id`(원본·썸네일 media 모두 GC). 전부 `require_erp()`(`app_user.erp_access`) 게이트 |
@@ -176,6 +177,15 @@ null` 전송)이고, 옵션 목록도 상품명 없이 `purchase_no`만 보여�
 상품을 판매사이트에 게시했는지 표시. `GET /stock?unlisted_only=`로 미게시 건만 필터 가능, `PATCH /purchases/:id`
 `{is_listed}`로 토글. `ErpStockView` 각 카드 우측에 "게시됨"/"미게시" 배지 버튼(탭하면 즉시 PATCH, 별도 저장 버튼 없음
 — 기존 `toggleReceived`와 동일한 optimistic-update+rollback 패턴) + 필터 패널에 "미게시만 보기" 체크박스 추가(2026-09-15).
+
+`sql/054_challenge_active.sql` (**적용됨** — healthweb 유저): `challenge` +`is_active`(0/1, 기본 1)·`deactivated_at` ·
+`notification` +`challenge_id` · `notification.kind` 체크 제약에 `'chal_end'` 추가(043 패턴).
+**비활성 = 읽기 전용(A안, 2026-10-01)**: 목록(`GET /challenges`)·검색·`/challenges/mine/week`에서 숨김 — 단 **내가 참여한
+비활성 챌린지는 목록에 "종료" 배지로 남음**(기록 열람용). 참여·체크인·체크 해제는 `require_active_challenge()`가 400.
+상세 `GET /challenges/:id`·공개 `/c/:id`는 `is_active` 내려주고 프론트가 "종료된 챌린지" 안내. 기록·등급 점수는 보존.
+`GET /challenges?include_inactive=true`는 오너만 유효(비오너는 무시). 저활용 = 만든 지 `LOW_USAGE_DAYS`(14)일 지났고
+그 기간 체크 0 — **표시만, 비활성화는 수동**. 프론트: `AdminChallengesView` + 챌린지 탭의 오너 전용 "비활성 챌린지도 보기"
+체크박스(둘이 `localStorage["healthweb.showInactive"]` 공유, `useShowInactive()`).
 
 ## VM 배포 (memo-agent)
 

@@ -38,6 +38,7 @@ cp .env.example .env   # HEALTHWEB_DB_PASSWORD 등 값 채우기 (.env는 git �
 | `test_push.py` | 텔레그램 연동 코드/1회용/만료/재배정/해제 |
 | `test_announce.py` | 관리자 공지 CRUD, 유효기간, 알림 노출 |
 | `test_rank.py` | 등급 점수 누적, 승급 알림, **하락 없음**(핵심 불변조건) |
+| `test_challenge_admin.py` | 챌린지 관리(오너): 활용도 목록, 비활성화=읽기 전용, 종료 알림, 노출 규칙, 다시 활성화 |
 | `test_checkin_week.py` | 오늘 체크 표(`GET /challenges/mine/week`), 체크인 날짜 범위(최근 7일) 제한 |
 | `test_edit.py` | 글 수정(`PATCH /posts/:id`) 본문/권한/유효성 |
 | `test_kind.py` | 글 종류(자랑/도전/성찰/그냥) 검증 + 수정 시 종류 변경 |

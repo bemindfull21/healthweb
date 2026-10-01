@@ -478,10 +478,15 @@ function FeedView() {
 
 // ---------- 뷰: 나 ----------
 function MeView() {
-  const { me, nav, bumpKey, openWeight, toast } = useStore();
+  const { me, setMe, nav, bumpKey, openWeight, toast } = useStore();
   const [data, setData] = useState(null);
   const [state, setState] = useState("loading");
   const [zoom, setZoom] = useState(null);
+
+  // 오너는 관리자 버튼의 미처리 신고 수를 최신으로
+  useEffect(() => {
+    if (me && me.is_owner) api("/auth/me").then(setMe).catch(() => {});
+  }, [bumpKey]);
 
   const load = useCallback(async () => {
     try { setData(await api("/weights")); setState("ok"); }
@@ -511,6 +516,9 @@ function MeView() {
         ${me && me.name && html`<button class="link-btn"
           onClick=${() => nav(`/u/${encodeURIComponent(me.name)}`)}>내 프로필 보기</button>`}
       </div>
+      ${me && me.is_owner && html`<button class="ghost admin-btn" onClick=${() => nav("/admin")}>
+        관리자${me.open_reports ? html`<span class="badge">${me.open_reports > 9 ? "9+" : me.open_reports}</span>` : ""}
+      </button>`}
       <button class="ghost" onClick=${() => nav("/settings")}>설정</button>
     </div>
     <div class="stats">
@@ -788,25 +796,30 @@ function ProfileView({ handle }) {
 
 // ---------- 뷰: 챌린지 목록 ----------
 function ChallengesView() {
-  const { bumpKey, nav, openChallenge } = useStore();
+  const { bumpKey, nav, openChallenge, me } = useStore();
   const [items, setItems] = useState(null);
   const [state, setState] = useState("loading");
+  const owner = !!(me && me.is_owner);
+  const [showInactive, setShowInactive] = useShowInactive();
   useEffect(() => {
     setState("loading");
-    api("/challenges").then((d) => { setItems(d.items); setState("ok"); })
+    api(`/challenges${owner && showInactive ? "?include_inactive=true" : ""}`)
+      .then((d) => { setItems(d.items); setState("ok"); })
       .catch(() => setState("err"));
-  }, [bumpKey]);
+  }, [bumpKey, owner, showInactive]);
 
   if (state === "loading") return html`<${Spinner} />`;
   if (state === "err") return html`<${ErrorBox} msg="챌린지를 불러오지 못했습니다" />`;
 
   return html`<div class="view challenges">
     <button class="write-btn" onClick=${openChallenge}>＋ 챌린지 만들기</button>
+    ${owner && html`<label class="check owner-filter"><input type="checkbox" checked=${showInactive}
+      onChange=${(e) => setShowInactive(e.target.checked)} /> 비활성 챌린지도 보기 <span class="muted sm">(관리자)</span></label>`}
     ${items.length === 0
       ? html`<div class="empty">첫 챌린지를 만들어 보세요. 연속으로 지킬 루틴을요.</div>`
       : items.map((c) => html`
-        <article class="challenge-card" key=${c.id} onClick=${() => nav(`/challenges/${c.id}`)}>
-          <div class="cc-title">${c.title}</div>
+        <article class=${"challenge-card" + (c.is_active === false ? " inactive" : "")} key=${c.id} onClick=${() => nav(`/challenges/${c.id}`)}>
+          <div class="cc-title">${c.title}${c.is_active === false && html` <span class="state-badge off">종료</span>`}</div>
           <div class="cc-meta">
             <span>${c.target_days}일 목표</span>
             <span>·</span>
@@ -866,7 +879,14 @@ function ChallengeView({ id }) {
     <p class="muted sm">${c.owner_name} 시작 · ${c.target_days}일 목표</p>
     ${c.description && html`<p class="cd-desc">${c.description}</p>`}
 
-    ${c.i_joined
+    ${!c.is_active && html`<div class="ended-note">종료된 챌린지예요. 그동안의 기록은 그대로 남아 있어요.</div>`}
+    ${!c.is_active
+      ? c.i_joined && html`
+        <div class="cd-progress">
+          <div class="pbar"><div class="pfill" style=${`width:${pct}%`}></div></div>
+          <div class="pnum">${c.my_progress} / ${c.target_days}일</div>
+        </div>`
+      : c.i_joined
       ? html`
         <div class="cd-progress">
           <div class="pbar"><div class="pfill" style=${`width:${pct}%`}></div></div>
@@ -930,9 +950,11 @@ function NotificationsView() {
       ? html`<div class="empty">아직 알림이 없어요.</div>`
       : items.map((n) => html`
         <button class=${"notif" + (n.read ? "" : " unread")} key=${n.id}
-          onClick=${() => n.kind === "rank" ? nav("/me") : n.post_id ? nav(`/p/${n.post_id}`) : nav(`/u/${encodeURIComponent(n.actor_name)}`)}>
+          onClick=${() => n.kind === "rank" ? nav("/me") : n.kind === "chal_end" ? nav(`/challenges/${n.challenge_id}`) : n.post_id ? nav(`/p/${n.post_id}`) : nav(`/u/${encodeURIComponent(n.actor_name)}`)}>
           ${n.kind === "rank"
             ? html`<span>🎉 <${RankBadge} level=${n.rank_level} /> 등급이 되었어요</span>`
+            : n.kind === "chal_end"
+            ? html`<span>🏁 <b>${n.challenge_title}</b> 챌린지가 종료되었어요</span>`
             : html`<span><b>${n.actor_name}</b>${verb[n.kind] || ""}</span>`}
           <span class="notif-time">${relTime(n.created_at)}</span>
         </button>`)}
@@ -1014,9 +1036,6 @@ function SettingsView() {
 
   const upd = (k) => (e) => setF({ ...f, [k]: e.target.value });
   return html`<div class="view settings">
-    ${meInfo.is_owner && html`<button class="admin-link" onClick=${() => nav("/admin")}>
-      관리자${meInfo.open_reports ? ` · 신고 ${meInfo.open_reports}` : ""}
-    </button>`}
     <div class="panel">
       <div class="panel-head"><span>프로필</span></div>
       <div class="avatar-row">
@@ -1717,6 +1736,80 @@ function AdminHubView() {
     <button class="hub-item" onClick=${() => nav("/admin/announcements")}>
       <span>공지 관리</span>
     </button>
+    <button class="hub-item" onClick=${() => nav("/admin/challenges")}>
+      <span>챌린지 관리</span>
+    </button>
+  </div>`;
+}
+
+// 오너 전용 "비활성 챌린지도 보기" — 챌린지 탭·챌린지 관리 공용, 기기별 저장
+const SHOW_INACTIVE_KEY = "healthweb.showInactive";
+function useShowInactive() {
+  const [on, setOn] = useState(() => { try { return localStorage.getItem(SHOW_INACTIVE_KEY) === "1"; } catch { return false; } });
+  const set = (v) => { setOn(v); try { localStorage.setItem(SHOW_INACTIVE_KEY, v ? "1" : "0"); } catch {} };
+  return [on, set];
+}
+
+// ---------- 뷰: 챌린지 관리 (오너) ----------
+function AdminChallengesView() {
+  const { toast, nav } = useStore();
+  const [data, setData] = useState(null);
+  const [state, setState] = useState("loading");
+  const [showInactive, setShowInactive] = useShowInactive();
+  const [lowOnly, setLowOnly] = useState(false);
+  const [busy, setBusy] = useState(null);
+
+  const load = useCallback(() => {
+    setState("loading");
+    api(`/admin/challenges${showInactive ? "?include_inactive=true" : ""}`)
+      .then((d) => { setData(d); setState("ok"); })
+      .catch((e) => setState(e.status === 403 ? "forbidden" : "err"));
+  }, [showInactive]);
+  useEffect(() => { load(); }, [load]);
+
+  const setActive = async (c, next) => {
+    const msg = next
+      ? `"${c.title}" 챌린지를 다시 열까요?`
+      : `"${c.title}" 챌린지를 비활성화할까요?\n참여자 ${c.member_count}명은 더 이상 체크할 수 없고, 종료 알림을 받습니다. 기록은 남아요.`;
+    if (!confirm(msg)) return;
+    setBusy(c.id);
+    try {
+      const r = await api(`/admin/challenges/${c.id}`, { method: "PATCH", body: { is_active: next } });
+      toast(next ? "다시 열었습니다" : `비활성화했습니다${r.notified ? ` · ${r.notified}명에게 알림` : ""}`);
+      load();
+    } catch (e) { toast(e.detail, "err"); }
+    finally { setBusy(null); }
+  };
+
+  if (state === "loading") return html`<${Spinner} />`;
+  if (state === "forbidden") return html`<div class="view"><${ErrorBox} msg="권한이 없습니다" /></div>`;
+  if (state === "err") return html`<div class="view"><${ErrorBox} msg="불러오지 못했습니다" onRetry=${load} /></div>`;
+
+  const lowCount = data.items.filter((c) => c.low_usage).length;
+  const items = lowOnly ? data.items.filter((c) => c.low_usage) : data.items;
+  const md = (ymd) => (ymd ? `${+ymd.slice(5, 7)}/${+ymd.slice(8, 10)}` : "없음");
+  return html`<div class="view admin-chal">
+    <div class="ac-filters">
+      <label class="check"><input type="checkbox" checked=${showInactive}
+        onChange=${(e) => setShowInactive(e.target.checked)} /> 비활성 챌린지도 보기</label>
+      <button class=${"chip" + (lowOnly ? " on" : "")} onClick=${() => setLowOnly(!lowOnly)}>저활용만 ${lowCount}</button>
+    </div>
+    <p class="muted sm">저활용 = 만든 지 ${data.low_usage_days}일 지났고 최근 ${data.low_usage_days}일 체크가 없음. 활용도 낮은 순.</p>
+    ${items.length === 0
+      ? html`<div class="empty">${lowOnly ? "저활용 챌린지가 없어요." : "챌린지가 없어요."}</div>`
+      : items.map((c) => html`<div class=${"ac-card" + (c.is_active ? "" : " inactive")} key=${c.id}>
+          <div class="ac-head">
+            <button class="ac-title plain" onClick=${() => nav(`/challenges/${c.id}`)}>${c.title}</button>
+            ${!c.is_active && html`<span class="state-badge off">비활성</span>`}
+            ${c.low_usage && html`<span class="state-badge low">저활용</span>`}
+          </div>
+          <div class="ac-meta muted sm">
+            ${c.owner_name} · 참여 ${c.member_count} · 최근7일 활동 ${c.active_7d}명 · 마지막 체크 ${md(c.last_check)}
+            ${!c.is_active && c.deactivated_at ? ` · ${new Date(c.deactivated_at).toLocaleDateString("ko-KR")} 비활성화` : ""}
+          </div>
+          <button class=${c.is_active ? "ghost" : ""} disabled=${busy === c.id}
+            onClick=${() => setActive(c, !c.is_active)}>${c.is_active ? "비활성화" : "다시 활성화"}</button>
+        </div>`)}
   </div>`;
 }
 
@@ -2137,8 +2230,9 @@ function App() {
   else if (route === "/notifications") { view = html`<${NotificationsView} />`; title = "알림"; }
   else if (route === "/me") { view = html`<${MeView} />`; title = "나"; }
   else if (route === "/search") { view = html`<${SearchView} />`; title = "검색"; back = () => history.back(); }
-  else if (route === "/admin") { view = html`<${AdminHubView} />`; title = "관리자"; back = () => nav("/settings"); }
+  else if (route === "/admin") { view = html`<${AdminHubView} />`; title = "관리자"; back = () => nav("/me"); }
   else if (route === "/admin/reports") { view = html`<${AdminReportsView} />`; title = "신고 관리"; back = () => nav("/admin"); }
+  else if (route === "/admin/challenges") { view = html`<${AdminChallengesView} />`; title = "챌린지 관리"; back = () => nav("/admin"); }
   else if (route === "/admin/announcements") { view = html`<${AdminAnnouncementsView} />`; title = "공지 관리"; back = () => nav("/admin"); }
   else if (route === "/settings") { view = html`<${SettingsView} />`; title = "설정"; back = () => nav("/me"); }
   else if (m) { view = html`<${PostView} id=${m[1]} />`; title = "글"; back = () => history.back(); }

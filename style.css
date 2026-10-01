@@ -174,7 +174,13 @@ button.on { background: var(--accent); color: #fff; }
 .me-head-id { flex: 1; min-width: 0; }
 .me-name { font-weight: 700; font-size: 1.1rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .link-btn { background: transparent; color: var(--accent); border: 0; padding: 2px 0 0; font-size: .82rem; font-weight: 500; }
-.me-head > .ghost { flex-shrink: 0; }
+.me-head > .ghost { flex-shrink: 0; padding: 8px 12px; }
+.me-head > .admin-btn { position: relative; color: var(--social); border-color: var(--social); }
+.admin-btn .badge {
+  position: absolute; top: -6px; right: -6px; min-width: 16px; height: 16px; padding: 0 4px;
+  background: var(--up); color: #fff; font-size: .62rem; font-weight: 700; border-radius: 999px;
+  display: inline-flex; align-items: center; justify-content: center;
+}
 
 /* ============ 통계 · 패널 · 차트 · 표 ============ */
 .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(100px, 1fr)); gap: 8px; margin-bottom: 14px; }
@@ -472,10 +478,6 @@ img.avatar { object-fit: cover; display: block; }
 
 .avatar-row { display: flex; align-items: center; gap: 14px; margin-bottom: 14px; }
 
-.admin-link {
-  width: 100%; background: var(--social-soft); color: var(--social);
-  border: 1px solid var(--social); font-weight: 600; margin-bottom: 16px;
-}
 
 .pd-menu { position: relative; margin-left: auto; }
 .menu-pop button.plain { color: var(--text); font-weight: 400; }
@@ -502,6 +504,20 @@ img.avatar { object-fit: cover; display: block; }
   background: var(--card); color: var(--text); border: 1px solid var(--border);
   border-radius: 12px; padding: 16px; font-weight: 600; font-size: 1rem;
 }
+/* 챌린지 관리 · 비활성 표시 */
+.ac-filters { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
+.ac-card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; margin-bottom: 10px;
+  display: grid; grid-template-columns: 1fr auto; gap: 4px 10px; align-items: center; }
+.ac-card.inactive, .challenge-card.inactive { opacity: .6; }
+.ac-head { display: flex; align-items: center; gap: 6px; min-width: 0; grid-column: 1; }
+.ac-title { background: transparent; padding: 0; font-weight: 700; color: var(--text); text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ac-meta { grid-column: 1; }
+.ac-card > button { grid-column: 2; grid-row: 1 / span 2; font-size: .85rem; padding: 7px 12px; }
+.state-badge { font-size: .7rem; font-weight: 700; padding: 1px 7px; border-radius: 999px; flex-shrink: 0; vertical-align: middle; }
+.state-badge.off { background: var(--card-2); color: var(--muted); border: 1px solid var(--border); }
+.state-badge.low { background: var(--social-soft); color: var(--social); }
+.owner-filter { margin: 0 0 12px; font-size: .9rem; }
+.ended-note { background: var(--card-2); color: var(--muted); border-radius: 10px; padding: 10px 12px; margin: 8px 0 12px; font-size: .9rem; }
 .hub-badge { background: var(--up); color: #fff; font-size: .75rem; font-weight: 700; padding: 2px 9px; border-radius: 999px; }
 
 .ann-card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 14px; margin-bottom: 12px; }

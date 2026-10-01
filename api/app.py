@@ -456,6 +456,19 @@ def require_owner(u: dict) -> None:
         raise HTTPException(403, "권한이 없습니다")
 
 
+def is_owner(u: dict) -> bool:
+    return bool(OWNER_LOGIN_ID) and u["login_id"] == OWNER_LOGIN_ID
+
+
+def require_active_challenge(cid: int) -> None:
+    """비활성(종료) 챌린지는 읽기 전용 — 참여·체크인·체크 해제 불가."""
+    c = q1("select is_active from healthweb.challenge where id = :c", c=cid)
+    if c is None:
+        raise HTTPException(404, "챌린지를 찾을 수 없습니다")
+    if not c["is_active"]:
+        raise HTTPException(400, "종료된 챌린지입니다")
+
+
 def require_erp(u: dict) -> None:
     if not u["erp_access"]:
         raise HTTPException(403, "권한이 없습니다")
@@ -553,6 +566,10 @@ class ChallengeIn(BaseModel):
 
 class CheckinIn(BaseModel):
     date: str
+
+
+class ChallengeActiveIn(BaseModel):
+    is_active: bool
 
 
 class ErpAccessIn(BaseModel):
@@ -1417,7 +1434,7 @@ def search(q: str, request: Request, u: dict = Depends(current_user)) -> dict:
         "(select count(*) from healthweb.challenge_member m where m.challenge_id = c.id) member_count, "
         "case when exists (select 1 from healthweb.challenge_member m "
         "  where m.challenge_id = c.id and m.login_id = :me) then 1 else 0 end i_joined "
-        "from healthweb.challenge c where lower(c.title) like :arg escape '\\' "
+        "from healthweb.challenge c where c.is_active = 1 and lower(c.title) like :arg escape '\\' "
         "order by c.id desc fetch first 12 rows only",
         me=me, arg=arg,
     )
@@ -1461,14 +1478,19 @@ def _challenge_progress(challenge_id: int, login_id: str) -> dict:
 
 
 @app.get("/challenges")
-def list_challenges(u: dict = Depends(current_user)) -> dict:
+def list_challenges(u: dict = Depends(current_user), include_inactive: bool = False) -> dict:
+    # 비활성 챌린지: 오너가 include_inactive 로 요청하거나, 내가 참여했던 것만 보인다(기록 열람용)
+    show_all = include_inactive and is_owner(u)
     rows = qall(
-        "select c.id, c.title, c.target_days, au.name owner_name, "
+        "select c.id, c.title, c.target_days, c.is_active, au.name owner_name, "
         "(select count(*) from healthweb.challenge_member m where m.challenge_id = c.id) member_count, "
         "case when exists (select 1 from healthweb.challenge_member m "
         "  where m.challenge_id = c.id and m.login_id = :me) then 1 else 0 end i_joined "
         "from healthweb.challenge c join healthweb.app_user au on au.login_id = c.owner "
-        "order by c.id desc fetch first 50 rows only",
+        + ("" if show_all else
+           "where c.is_active = 1 or exists (select 1 from healthweb.challenge_member m "
+           "  where m.challenge_id = c.id and m.login_id = :me) ")
+        + "order by c.is_active desc, c.id desc fetch first 50 rows only",
         me=u["login_id"],
     )
     out = []
@@ -1476,7 +1498,7 @@ def list_challenges(u: dict = Depends(current_user)) -> dict:
         item = {
             "id": r["id"], "title": r["title"], "target_days": r["target_days"],
             "owner_name": r["owner_name"], "member_count": r["member_count"],
-            "i_joined": bool(r["i_joined"]),
+            "i_joined": bool(r["i_joined"]), "is_active": bool(r["is_active"]),
         }
         if item["i_joined"]:
             item["progress"] = _challenge_progress(r["id"], u["login_id"])["done"]
@@ -1497,6 +1519,7 @@ def my_challenges_week(end: str, u: dict = Depends(current_user)) -> dict:
         "  where k.challenge_id = c.id and k.login_id = :me) done "
         "from healthweb.challenge c join healthweb.challenge_member m "
         "  on m.challenge_id = c.id and m.login_id = :me "
+        "where c.is_active = 1 "
         "order by m.joined_at, c.id",
         me=u["login_id"],
     )
@@ -1540,7 +1563,8 @@ def create_challenge(body: ChallengeIn, u: dict = Depends(current_user)) -> dict
 @app.get("/challenges/{cid}")
 def get_challenge(cid: int, u: dict = Depends(current_user)) -> dict:
     c = q1(
-        "select c.id, c.title, c.description, c.target_days, c.owner, au.name owner_name, c.created_at "
+        "select c.id, c.title, c.description, c.target_days, c.owner, au.name owner_name, c.created_at, "
+        "c.is_active, c.deactivated_at "
         "from healthweb.challenge c join healthweb.app_user au on au.login_id = c.owner where c.id = :c",
         c=cid,
     )
@@ -1557,6 +1581,7 @@ def get_challenge(cid: int, u: dict = Depends(current_user)) -> dict:
         "id": c["id"], "title": c["title"], "description": c["description"],
         "target_days": c["target_days"], "owner_name": c["owner_name"],
         "mine": c["owner"] == u["login_id"], "created_at": iso_z(c["created_at"]),
+        "is_active": bool(c["is_active"]), "deactivated_at": iso_z(c["deactivated_at"]) if c["deactivated_at"] else None,
         "i_joined": any(m["login_id"] == u["login_id"] for m in members),
         "my_progress": mine["done"], "my_streak": mine["streak"], "my_dates": mine["dates"],
         "members": [
@@ -1569,8 +1594,7 @@ def get_challenge(cid: int, u: dict = Depends(current_user)) -> dict:
 
 @app.post("/challenges/{cid}/join")
 def join_challenge(cid: int, u: dict = Depends(current_user)) -> dict:
-    if q1("select 1 x from healthweb.challenge where id = :c", c=cid) is None:
-        raise HTTPException(404, "챌린지를 찾을 수 없습니다")
+    require_active_challenge(cid)
     try:
         dml(
             "insert into healthweb.challenge_member (challenge_id, login_id) values (:c, :l)",
@@ -1601,6 +1625,7 @@ def checkin(cid: int, body: CheckinIn, u: dict = Depends(current_user)) -> dict:
     hi = (today + dt.timedelta(days=1)).strftime("%Y-%m-%d")
     if not (lo <= d <= hi):
         raise HTTPException(400, "최근 7일 안의 날짜만 체크할 수 있습니다")
+    require_active_challenge(cid)
     if q1("select 1 x from healthweb.challenge_member where challenge_id = :c and login_id = :l",
           c=cid, l=u["login_id"]) is None:
         raise HTTPException(400, "먼저 챌린지에 참여하세요")
@@ -1618,11 +1643,87 @@ def checkin(cid: int, body: CheckinIn, u: dict = Depends(current_user)) -> dict:
 
 @app.delete("/challenges/{cid}/checkin/{date}")
 def uncheckin(cid: int, date: str, u: dict = Depends(current_user)) -> dict:
+    require_active_challenge(cid)
     dml(
         "delete from healthweb.challenge_checkin where challenge_id = :c and login_id = :l and check_date = :d",
         c=cid, l=u["login_id"], d=date,
     )
     return _challenge_progress(cid, u["login_id"])
+
+
+# ---------- 관리자: 챌린지 관리 (오너 전용) ----------
+
+LOW_USAGE_DAYS = 14  # 만든 지 이만큼 지났고 이 기간 체크가 0이면 '저활용' 표시 (비활성화는 수동)
+
+
+@app.get("/admin/challenges")
+def admin_challenges(u: dict = Depends(current_user), include_inactive: bool = False) -> dict:
+    require_owner(u)
+    today = (utcnow() + dt.timedelta(hours=9)).date()  # check_date 는 사용자 로컬(대부분 KST)
+    d7 = (today - dt.timedelta(days=6)).strftime("%Y-%m-%d")
+    dlow = (today - dt.timedelta(days=LOW_USAGE_DAYS - 1)).strftime("%Y-%m-%d")
+    rows = qall(
+        "select c.id, c.title, c.target_days, c.is_active, c.created_at, c.deactivated_at, "
+        "au.name owner_name, "
+        "(select count(*) from healthweb.challenge_member m where m.challenge_id = c.id) member_count, "
+        "(select count(distinct k.login_id) from healthweb.challenge_checkin k "
+        "  where k.challenge_id = c.id and k.check_date >= :d7) active7, "
+        "(select count(*) from healthweb.challenge_checkin k "
+        "  where k.challenge_id = c.id and k.check_date >= :dlow) checks_low, "
+        "(select max(k.check_date) from healthweb.challenge_checkin k where k.challenge_id = c.id) last_check "
+        "from healthweb.challenge c join healthweb.app_user au on au.login_id = c.owner "
+        + ("" if include_inactive else "where c.is_active = 1 "),
+        d7=d7, dlow=dlow,
+    )
+    old_enough = utcnow() - dt.timedelta(days=LOW_USAGE_DAYS)
+    items = [
+        {"id": r["id"], "title": r["title"], "target_days": r["target_days"],
+         "owner_name": r["owner_name"], "is_active": bool(r["is_active"]),
+         "created_at": iso_z(r["created_at"]), "deactivated_at": iso_z(r["deactivated_at"]) if r["deactivated_at"] else None,
+         "member_count": r["member_count"], "active_7d": r["active7"], "last_check": r["last_check"],
+         "low_usage": bool(r["is_active"]) and r["checks_low"] == 0 and r["created_at"] < old_enough}
+        for r in rows
+    ]
+    # 활성 먼저, 그 안에서 활용도 낮은 순(최근 7일 활동자 → 마지막 체크가 오래된 순)
+    items.sort(key=lambda i: (not i["is_active"], i["active_7d"], i["last_check"] or "", i["id"]))
+    return {"items": items, "low_usage_days": LOW_USAGE_DAYS}
+
+
+@app.patch("/admin/challenges/{cid}")
+def admin_set_challenge_active(cid: int, body: ChallengeActiveIn, u: dict = Depends(current_user)) -> dict:
+    require_owner(u)
+    c = q1("select title, is_active from healthweb.challenge where id = :c", c=cid)
+    if c is None:
+        raise HTTPException(404, "챌린지를 찾을 수 없습니다")
+    if bool(c["is_active"]) == body.is_active:
+        return {"ok": True, "is_active": body.is_active, "notified": 0}
+    dml(
+        "update healthweb.challenge set is_active = :a, "
+        "deactivated_at = case when :a = 0 then systimestamp else null end where id = :c",
+        a=1 if body.is_active else 0, c=cid,
+    )
+    notified = 0
+    if body.is_active:
+        # 다시 열면 아직 안 읽은 종료 알림은 거둬들임
+        dml("delete from healthweb.notification where kind = 'chal_end' and challenge_id = :c "
+            "and read_at is null", c=cid)
+        return {"ok": True, "is_active": True, "notified": 0}
+    members = qall("select login_id, tg_chat_id from healthweb.challenge_member m "
+                   "join healthweb.app_user au using (login_id) where m.challenge_id = :c", c=cid)
+    text = (f"\U0001f3c1 '{c['title']}' 챌린지가 종료되었어요. 그동안의 기록은 그대로 남아 있어요.\n"
+            f"{WEB_APP_URL}/challenges/{cid}")
+    for m in members:
+        if m["login_id"] == u["login_id"]:
+            continue
+        dml(
+            "insert into healthweb.notification (login_id, kind, actor, challenge_id) "
+            "values (:r, 'chal_end', :a, :c)",
+            r=m["login_id"], a=u["login_id"], c=cid,
+        )
+        notified += 1
+        if TG_TOKEN and m["tg_chat_id"] is not None:
+            threading.Thread(target=_push_worker, args=(int(m["tg_chat_id"]), text), daemon=True).start()
+    return {"ok": True, "is_active": False, "notified": notified}
 
 
 # ---------- 공개 챌린지 페이지 (로그인 불필요) ----------
@@ -1632,7 +1733,7 @@ def public_challenge(cid: int, request: Request) -> dict:
     if not rate_ok(f"pubc:{ip(request)}", 60, 60):
         raise HTTPException(429, "요청이 많습니다")
     c = q1(
-        "select c.id, c.title, c.description, c.target_days, au.name owner_name, c.created_at "
+        "select c.id, c.title, c.description, c.target_days, au.name owner_name, c.created_at, c.is_active "
         "from healthweb.challenge c join healthweb.app_user au on au.login_id = c.owner "
         "where c.id = :c",
         c=cid,
@@ -1657,7 +1758,7 @@ def public_challenge(cid: int, request: Request) -> dict:
     return {
         "id": c["id"], "title": c["title"], "description": c["description"],
         "target_days": c["target_days"], "owner_name": c["owner_name"],
-        "created_at": iso_z(c["created_at"]),
+        "created_at": iso_z(c["created_at"]), "is_active": bool(c["is_active"]),
         "member_count": member_count, "active_this_week": active,
         "sample_members": [m["name"] for m in members],
     }
@@ -1706,8 +1807,10 @@ def notifications(u: dict = Depends(current_user), cursor: Optional[int] = None,
     if cursor:
         binds["cur"] = cursor
     rows = qall(
-        "select n.id, n.kind, n.post_id, n.rank_level, n.read_at, n.created_at, au.name actor_name "
+        "select n.id, n.kind, n.post_id, n.rank_level, n.challenge_id, ch.title challenge_title, "
+        "n.read_at, n.created_at, au.name actor_name "
         "from healthweb.notification n join healthweb.app_user au on au.login_id = n.actor "
+        "left join healthweb.challenge ch on ch.id = n.challenge_id "
         "where n.login_id = :me " + where + " "
         "and n.actor not in ("
         "  select blocked from healthweb.user_block where blocker = :me "
@@ -1717,6 +1820,7 @@ def notifications(u: dict = Depends(current_user), cursor: Optional[int] = None,
     )
     items = [
         {"id": r["id"], "kind": r["kind"], "post_id": r["post_id"], "rank_level": r["rank_level"],
+         "challenge_id": r["challenge_id"], "challenge_title": r["challenge_title"],
          "actor_name": r["actor_name"], "read": r["read_at"] is not None,
          "created_at": iso_z(r["created_at"])}
         for r in rows
